@@ -1,15 +1,21 @@
 /**
  * Oracle V2 Demo — Full end-to-end demonstration
  *
- * 1. Unseal Vault (3-of-5 Shamir shares)
+ * 1. Load credentials from openbao-creds.json (auto-setup, dev mode)
  * 2. Fetch live prices (3 rounds, 5s apart)
- * 3. Sign each round via Vault Transit + verify
+ * 3. Sign each round via OpenBao Transit + verify
  * 4. Run security tests
  * 5. Print V1 vs V2 comparison table
+ *
+ * Using OpenBao (open-source Vault fork, MPL 2.0)
+ * OpenBao dev mode is auto-initialized and auto-unsealed — no manual
+ * unseal step needed. Run setup-openbao.sh first.
  */
 
-import { readFileSync } from "fs";
-import { VaultClient } from "./vault-client.js";
+import { readFileSync, existsSync } from "fs";
+import { resolve, join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { TransitClient, VaultClient } from "./vault-client.js";
 import { OracleRelay } from "./oracle-relay.js";
 import { formatPrice } from "./price-fetcher.js";
 import {
@@ -30,9 +36,18 @@ const WHITE = "\x1b[37m";
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const RELAY_DIR = resolve(__dirname, "..");
+
+// Primary: openbao-creds.json (created by setup-openbao.sh)
+const OPENBAO_CREDS_PATH = join(RELAY_DIR, "openbao-creds.json");
+
+// Legacy fallback paths (backwards compat with old Vault setup)
+const LEGACY_INIT_KEYS_PATH = "/home/jack/vault-test/init-keys.json";
+const LEGACY_RELAY_TOKEN_PATH = "/home/jack/vault-test/relay-token.txt";
+
 const VAULT_ADDR = "http://127.0.0.1:8200";
-const INIT_KEYS_PATH = "/home/jack/vault-test/init-keys.json";
-const RELAY_TOKEN_PATH = "/home/jack/vault-test/relay-token.txt";
 const TRANSIT_KEY_NAME = "oracle-price-signer";
 const NUM_ROUNDS = 3;
 const ROUND_DELAY_MS = 5000;
@@ -65,34 +80,124 @@ function truncateSig(sig: string | null): string {
   return sig.substring(0, 30) + "...";
 }
 
+interface LoadedCreds {
+  vaultAddr: string;
+  relayToken: string;
+  keyName: string;
+  isOpenBao: boolean;
+  // Legacy Vault unseal keys (null in OpenBao dev mode — not needed)
+  unsealKeys: string[] | null;
+}
+
+function loadCredentials(): LoadedCreds {
+  // Try openbao-creds.json first
+  if (existsSync(OPENBAO_CREDS_PATH)) {
+    const creds = JSON.parse(readFileSync(OPENBAO_CREDS_PATH, "utf-8"));
+    return {
+      vaultAddr: creds.vault_addr || VAULT_ADDR,
+      relayToken: creds.relay_token,
+      keyName: creds.key_name || TRANSIT_KEY_NAME,
+      isOpenBao: true,
+      unsealKeys: null, // Dev mode — no unseal needed
+    };
+  }
+
+  // Legacy fallback: old Vault init-keys.json + relay-token.txt
+  if (existsSync(LEGACY_INIT_KEYS_PATH) && existsSync(LEGACY_RELAY_TOKEN_PATH)) {
+    const initKeys = JSON.parse(readFileSync(LEGACY_INIT_KEYS_PATH, "utf-8"));
+    const relayToken = readFileSync(LEGACY_RELAY_TOKEN_PATH, "utf-8").trim();
+    return {
+      vaultAddr: VAULT_ADDR,
+      relayToken,
+      keyName: TRANSIT_KEY_NAME,
+      isOpenBao: false,
+      unsealKeys: initKeys.unseal_keys_b64,
+    };
+  }
+
+  // No credentials found
+  const errMsg = [
+    `No credentials found. Either:`,
+    `  1. Run setup-openbao.sh to auto-configure OpenBao (recommended):`,
+    `       bash relay/src/setup-openbao.sh`,
+    `  2. Or use: ./run-demo.sh`,
+    ``,
+    `Expected: ${OPENBAO_CREDS_PATH}`,
+  ].join("\n");
+
+  throw new Error(errMsg);
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  header("Oracle V2 Demo — Vault Transit Signing (TypeScript)");
+  header("Oracle V2 Demo — OpenBao Transit Signing (TypeScript)");
 
+  // ═══════════════════════════════════════════════════════════════════
   // Load credentials
-  const initKeys = JSON.parse(readFileSync(INIT_KEYS_PATH, "utf-8"));
-  const relayToken = readFileSync(RELAY_TOKEN_PATH, "utf-8").trim();
-  const unsealKeys: string[] = initKeys.unseal_keys_b64;
-
-  const vault = new VaultClient(VAULT_ADDR, relayToken);
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Step 1: Unseal Vault
   // ═══════════════════════════════════════════════════════════════════
 
-  section("1/5", "Unsealing Vault...");
+  let creds: LoadedCreds;
+  try {
+    creds = loadCredentials();
+  } catch (err: any) {
+    console.error(`${RED}${err.message}${RESET}`);
+    process.exit(1);
+  }
+
+  // Show backend info
+  if (creds.isOpenBao) {
+    console.log(
+      `  ${GREEN}${BOLD}Using OpenBao (open-source Vault fork, MPL 2.0)${RESET}`
+    );
+    console.log(
+      `  ${DIM}Dev mode: auto-initialized + auto-unsealed${RESET}`
+    );
+  } else {
+    console.log(
+      `  ${YELLOW}Using HashiCorp Vault (legacy mode)${RESET}`
+    );
+  }
+  console.log();
+
+  const vault = new TransitClient(creds.vaultAddr, creds.relayToken);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Step 1: Health check (and unseal if needed for legacy Vault)
+  // ═══════════════════════════════════════════════════════════════════
+
+  section("1/5", "Checking Transit backend...");
 
   const health = await vault.healthCheck();
 
   if (!health.initialized) {
-    console.log(`  ${RED}❌ Vault is not initialized!${RESET}`);
+    console.log(`  ${RED}❌ Backend is not initialized!${RESET}`);
+    if (!creds.isOpenBao) {
+      console.log(
+        `  ${YELLOW}Hint: Run setup-openbao.sh for automatic setup${RESET}`
+      );
+    }
     process.exit(1);
   }
 
   if (health.sealed) {
-    // Use first 3 keys (threshold = 3)
-    const keysToUse = unsealKeys.slice(0, 3);
+    if (creds.isOpenBao) {
+      // OpenBao dev mode should never be sealed
+      console.log(
+        `  ${RED}❌ OpenBao dev mode is sealed — this is unexpected${RESET}`
+      );
+      process.exit(1);
+    }
+
+    // Legacy Vault: unseal with Shamir keys
+    if (!creds.unsealKeys || creds.unsealKeys.length === 0) {
+      console.log(
+        `  ${RED}❌ Vault is sealed but no unseal keys available${RESET}`
+      );
+      process.exit(1);
+    }
+
+    const keysToUse = creds.unsealKeys.slice(0, 3);
     const unsealed = await vault.unseal(keysToUse);
 
     if (!unsealed) {
@@ -103,8 +208,9 @@ async function main() {
       `  ${GREEN}✅ Vault unsealed (3-of-5 Shamir shares)${RESET}`
     );
   } else {
+    const backendName = creds.isOpenBao ? "OpenBao" : "Vault";
     console.log(
-      `  ${GREEN}✅ Vault already unsealed${RESET} ${DIM}(v${health.version})${RESET}`
+      `  ${GREEN}✅ ${backendName} ready${RESET} ${DIM}(v${health.version})${RESET}`
     );
   }
 
@@ -114,11 +220,11 @@ async function main() {
   // Step 2 + 3: Fetch prices and sign (3 rounds)
   // ═══════════════════════════════════════════════════════════════════
 
-  const relay = new OracleRelay(vault, TRANSIT_KEY_NAME);
+  const relay = new OracleRelay(vault, creds.keyName);
 
   section("2/5", "Fetching live prices...");
   console.log();
-  section("3/5", `Signing via Vault Transit (${NUM_ROUNDS} rounds)...`);
+  section("3/5", `Signing via OpenBao Transit (${NUM_ROUNDS} rounds)...`);
   console.log();
 
   for (let round = 1; round <= NUM_ROUNDS; round++) {
@@ -135,7 +241,9 @@ async function main() {
     // Check if we got any signed prices
     const signedCount = result.prices.filter((p) => p.signature !== null).length;
     if (signedCount === 0 && round === 1) {
-      console.log(`    ${DIM}(CoinGecko rate-limited — prices will appear on next round)${RESET}`);
+      console.log(
+        `    ${DIM}(CoinGecko rate-limited — prices will appear on next round)${RESET}`
+      );
     }
 
     // Print results for key assets
@@ -149,7 +257,11 @@ async function main() {
 
       // Show deviation from last round if available
       let deltaStr = "";
-      if (round > 1 && sp.boundsCheck.deviation !== undefined && sp.boundsCheck.deviation > 0) {
+      if (
+        round > 1 &&
+        sp.boundsCheck.deviation !== undefined &&
+        sp.boundsCheck.deviation > 0
+      ) {
         deltaStr = ` — Δ${(sp.boundsCheck.deviation * 100).toFixed(2)}% ${DIM}(within ±20% bounds)${RESET}`;
       }
 
@@ -176,9 +288,9 @@ async function main() {
 
   const securityResults = await runSecurityTests(
     vault,
-    TRANSIT_KEY_NAME,
-    VAULT_ADDR,
-    relayToken
+    creds.keyName,
+    creds.vaultAddr,
+    creds.relayToken
   );
 
   printSecurityResults(securityResults);
@@ -192,7 +304,7 @@ async function main() {
   console.log();
 
   const rows = [
-    ["Key storage", "JSON files on disk", "Vault Transit (HSM-backed)"],
+    ["Key storage", "JSON files on disk", "Transit (HSM-backed)"],
     ["Key theft impact", "Permanent compromise", "Revoke token instantly"],
     ["Price validation", "DISABLED", "Active (±20% bounds)"],
     ["On-chain bounds", "None", "±20% from last valid"],
@@ -209,7 +321,7 @@ async function main() {
   const col3Width = 26;
 
   const h = (s: string, w: number) => s.padEnd(w);
-  const border = (l: string, m: string, r: string, f: string) =>
+  const border = (l: string, m: string, r: string, _f: string) =>
     `  ${l}${"─".repeat(col1Width + 2)}${m}${"─".repeat(col2Width + 2)}${m}${"─".repeat(col3Width + 2)}${r}`;
 
   console.log(border("┌", "┬", "┐", "─"));
@@ -242,9 +354,15 @@ async function main() {
     );
   }
 
+  const backendLabel = creds.isOpenBao ? "OpenBao Transit" : "Vault Transit";
   console.log(
-    `${DIM}  Vault: ${VAULT_ADDR} | Key: ${TRANSIT_KEY_NAME} | Rounds: ${NUM_ROUNDS}${RESET}`
+    `${DIM}  Backend: ${backendLabel} | Key: ${creds.keyName} | Rounds: ${NUM_ROUNDS}${RESET}`
   );
+  if (creds.isOpenBao) {
+    console.log(
+      `${DIM}  Using OpenBao (open-source Vault fork, MPL 2.0) — https://openbao.org${RESET}`
+    );
+  }
   console.log();
 }
 

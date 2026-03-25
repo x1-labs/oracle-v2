@@ -1,10 +1,17 @@
 /**
- * Vault Transit Signing Client
+ * Transit Signing Client
  *
- * Communicates with HashiCorp Vault's Transit secrets engine for Ed25519
- * signing and verification. Keys never leave Vault — only signatures
- * transit the wire.
+ * Communicates with OpenBao (or HashiCorp Vault) Transit secrets engine
+ * for Ed25519 signing and verification. Keys never leave the server —
+ * only signatures transit the wire.
+ *
+ * OpenBao is the open-source fork of HashiCorp Vault (MPL 2.0).
+ * The HTTP API is 100% identical — same endpoints, same auth headers,
+ * same env vars (VAULT_ADDR, VAULT_TOKEN).
  */
+
+import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
 
 export interface VaultHealth {
   sealed: boolean;
@@ -19,7 +26,17 @@ export interface UnsealResponse {
   progress: number;
 }
 
-export class VaultClient {
+export interface OpenBaoCredsFile {
+  vault_addr: string;
+  root_token: string;
+  relay_token: string;
+  key_name: string;
+  pid: number;
+  backend?: string;
+  version?: string;
+}
+
+export class TransitClient {
   private vaultAddr: string;
   private token: string;
 
@@ -28,10 +45,54 @@ export class VaultClient {
     this.token = token.trim();
   }
 
+  /**
+   * Create a TransitClient from an openbao-creds.json file.
+   * Falls back to old init-keys.json / relay-token.txt paths for backwards compat.
+   */
+  static fromCredsFile(credsPath: string): TransitClient {
+    const absPath = resolve(credsPath);
+
+    if (!existsSync(absPath)) {
+      throw new Error(`Credentials file not found: ${absPath}`);
+    }
+
+    const creds: OpenBaoCredsFile = JSON.parse(readFileSync(absPath, "utf-8"));
+
+    if (!creds.vault_addr || !creds.relay_token) {
+      throw new Error(
+        `Invalid credentials file — missing vault_addr or relay_token: ${absPath}`
+      );
+    }
+
+    return new TransitClient(creds.vault_addr, creds.relay_token);
+  }
+
+  /**
+   * Returns "openbao" or "vault" based on the health check version string.
+   * OpenBao versions look like "2.x.y" (no "Vault" prefix in the version field,
+   * but the build info will say "OpenBao" in the version metadata).
+   * As a practical heuristic: major version ≥ 2 → openbao.
+   */
+  async backend(): Promise<"openbao" | "vault"> {
+    try {
+      const health = await this.healthCheck();
+      const version = health.version || "";
+      // OpenBao uses semver like "2.5.2" while Vault uses "1.x.y"
+      // Also check for "OpenBao" in the version string
+      const majorVersion = parseInt(version.split(".")[0] || "0", 10);
+      if (version.toLowerCase().includes("openbao") || majorVersion >= 2) {
+        return "openbao";
+      }
+      return "vault";
+    } catch {
+      return "vault";
+    }
+  }
+
   // ─── Health ─────────────────────────────────────────────────────────
 
   async healthCheck(): Promise<VaultHealth> {
-    // Vault /sys/health returns 200 if unsealed+initialized,
+    // /sys/health returns 200 if unsealed+initialized,
     // 429 if unsealed+standby, 472 if recovery, 501 if not init, 503 if sealed
     const res = await fetch(`${this.vaultAddr}/v1/sys/health`, {
       method: "GET",
@@ -76,8 +137,8 @@ export class VaultClient {
   // ─── Sign ───────────────────────────────────────────────────────────
 
   /**
-   * Sign data using Vault Transit. Returns the full vault signature string
-   * (e.g. "vault:v1:base64sig...").
+   * Sign data using Transit. Returns the full signature string
+   * (e.g. "vault:v1:base64sig..." — same format for OpenBao).
    */
   async sign(keyName: string, data: Buffer): Promise<string> {
     const b64Input = data.toString("base64");
@@ -99,7 +160,7 @@ export class VaultClient {
 
     if (!res.ok) {
       const errBody = await res.text();
-      throw new Error(`Vault sign failed (${res.status}): ${errBody}`);
+      throw new Error(`Transit sign failed (${res.status}): ${errBody}`);
     }
 
     const body = await res.json();
@@ -136,7 +197,7 @@ export class VaultClient {
 
     if (!res.ok) {
       const errBody = await res.text();
-      throw new Error(`Vault verify failed (${res.status}): ${errBody}`);
+      throw new Error(`Transit verify failed (${res.status}): ${errBody}`);
     }
 
     const body = await res.json();
@@ -205,3 +266,7 @@ export class VaultClient {
     return body.data.signature as string;
   }
 }
+
+// Backwards-compatible aliases (value + type)
+export const VaultClient = TransitClient;
+export type VaultClient = TransitClient;

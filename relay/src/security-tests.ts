@@ -1,15 +1,19 @@
 /**
- * Security Test Suite — validates Vault Transit security properties
+ * Security Test Suite — validates Transit signing security properties
  *
  * Tests:
  * 1. Key export blocked (policy enforcement)
  * 2. Tamper detection (sign + modify data + verify → fail)
- * 3. Invalid token rejection
+ * 3. Invalid token rejected
  * 4. Price bounds enforcement (>20% spike)
  * 5. Staleness detection (old timestamps)
+ * 6. Backend version reported correctly (OpenBao vs Vault)
  */
 
-import { VaultClient } from "./vault-client.js";
+import { readFileSync, existsSync } from "fs";
+import { resolve, join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { TransitClient, VaultClient } from "./vault-client.js";
 import { PriceValidator } from "./price-validator.js";
 
 // ANSI color codes
@@ -24,7 +28,7 @@ export interface TestResult {
 }
 
 export async function runSecurityTests(
-  vault: VaultClient,
+  vault: TransitClient,
   keyName: string,
   vaultAddr: string,
   token: string
@@ -44,12 +48,15 @@ export async function runSecurityTests(
   } catch (err: any) {
     const msg = err.message || "";
     const isBlocked =
-      msg.includes("403") || msg.includes("400") || msg.includes("blocked") || msg.includes("permission denied");
+      msg.includes("403") ||
+      msg.includes("400") ||
+      msg.includes("blocked") ||
+      msg.includes("permission denied");
     results.push({
       name: "Key export blocked",
       passed: isBlocked,
       detail: isBlocked
-        ? `403 Forbidden — key material stays in Vault`
+        ? `403 Forbidden — key material stays in Transit`
         : `Unexpected error: ${msg}`,
     });
   }
@@ -68,7 +75,7 @@ export async function runSecurityTests(
       name: "Tamper detection working",
       passed: !valid,
       detail: !valid
-        ? "Tampered data correctly rejected by Vault"
+        ? "Tampered data correctly rejected by Transit"
         : "CRITICAL: Tampered data was accepted!",
     });
   } catch (err: any) {
@@ -96,7 +103,10 @@ export async function runSecurityTests(
   } catch (err: any) {
     const msg = err.message || "";
     const rejected =
-      msg.includes("403") || msg.includes("400") || msg.includes("permission denied") || msg.includes("missing client token");
+      msg.includes("403") ||
+      msg.includes("400") ||
+      msg.includes("permission denied") ||
+      msg.includes("missing client token");
     results.push({
       name: "Invalid token rejected",
       passed: rejected,
@@ -139,6 +149,34 @@ export async function runSecurityTests(
     });
   }
 
+  // ─── Test 6: Backend Version Check ────────────────────────────────
+
+  try {
+    const health = await vault.healthCheck();
+    const version = health.version || "unknown";
+    const backendType = await vault.backend();
+
+    // Version should be a non-empty semver string, not "unknown"
+    const versionLooksValid =
+      version !== "unknown" &&
+      version.length > 0 &&
+      /^\d+\.\d+/.test(version);
+
+    results.push({
+      name: "Backend version reported correctly",
+      passed: versionLooksValid,
+      detail: versionLooksValid
+        ? `${backendType} v${version} — version string is valid`
+        : `Version reported as "${version}" — unexpected format`,
+    });
+  } catch (err: any) {
+    results.push({
+      name: "Backend version reported correctly",
+      passed: false,
+      detail: `Health check failed: ${err.message}`,
+    });
+  }
+
   return results;
 }
 
@@ -160,30 +198,48 @@ export function printSecurityResults(results: TestResult[]): void {
 
 // ─── Standalone execution ───────────────────────────────────────────────────
 
-if (process.argv[1]?.endsWith("security-tests.ts") ||
-    process.argv[1]?.endsWith("security-tests.js")) {
-  import("fs").then(async (fs) => {
-    const token = fs
-      .readFileSync("/home/jack/vault-test/relay-token.txt", "utf-8")
-      .trim();
-    const vault = new VaultClient("http://127.0.0.1:8200", token);
-    const keyName = "oracle-price-signer";
+if (
+  process.argv[1]?.endsWith("security-tests.ts") ||
+  process.argv[1]?.endsWith("security-tests.js")
+) {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const RELAY_DIR = resolve(__dirname, "..");
 
-    console.log("\n🔒 Oracle V2 — Security Test Suite\n");
+  const OPENBAO_CREDS_PATH = join(RELAY_DIR, "openbao-creds.json");
+  const LEGACY_TOKEN_PATH = "/home/jack/vault-test/relay-token.txt";
 
-    // Check if vault is sealed first
-    const health = await vault.healthCheck();
+  let token: string;
+  let vaultAddr = "http://127.0.0.1:8200";
+
+  if (existsSync(OPENBAO_CREDS_PATH)) {
+    const creds = JSON.parse(readFileSync(OPENBAO_CREDS_PATH, "utf-8"));
+    token = creds.relay_token;
+    vaultAddr = creds.vault_addr || vaultAddr;
+  } else if (existsSync(LEGACY_TOKEN_PATH)) {
+    token = readFileSync(LEGACY_TOKEN_PATH, "utf-8").trim();
+  } else {
+    console.error(
+      "No credentials found. Run: bash relay/src/setup-openbao.sh"
+    );
+    process.exit(1);
+  }
+
+  const vault = new TransitClient(vaultAddr, token);
+  const keyName = "oracle-price-signer";
+
+  console.log("\n🔒 Oracle V2 — Security Test Suite\n");
+
+  // Check if sealed first (shouldn't happen in OpenBao dev mode)
+  vault.healthCheck().then(async (health) => {
     if (health.sealed) {
-      console.log("⚠️  Vault is sealed — unseal first before running security tests.");
+      console.log(
+        "⚠️  Backend is sealed — run setup-openbao.sh to restart."
+      );
       process.exit(1);
     }
 
-    const results = await runSecurityTests(
-      vault,
-      keyName,
-      "http://127.0.0.1:8200",
-      token
-    );
+    const results = await runSecurityTests(vault, keyName, vaultAddr, token);
     printSecurityResults(results);
     process.exit(results.every((r) => r.passed) ? 0 : 1);
   });

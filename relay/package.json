@@ -1,11 +1,14 @@
 {
   "name": "oracle-v2-relay",
   "version": "1.0.0",
-  "description": "Oracle V2 off-chain relay with HashiCorp Vault Transit signing",
+  "description": "Oracle V2 off-chain relay with OpenBao Transit signing (open-source Vault fork, MPL 2.0)",
   "type": "module",
   "scripts": {
     "demo": "npx tsx src/demo.ts",
-    "security": "npx tsx src/security-tests.ts"
+    "security": "npx tsx src/security-tests.ts",
+    "setup": "bash src/setup-openbao.sh",
+    "teardown": "bash src/teardown-openbao.sh",
+    "run-demo": "bash run-demo.sh"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.0"
