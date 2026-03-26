@@ -1,161 +1,176 @@
-# Oracle V2 — Secure Price Feed for X1
+# Oracle V2 — OpenBao Transit Price Oracle
 
-On-chain Anchor program with hardened security + TypeScript off-chain relay using **OpenBao Transit** for signing.
+A production-ready price oracle for X1/Solana that uses **OpenBao Transit** (Ed25519 HSM-style signing) to authenticate price submissions on-chain.
 
-**Deployed on X1 Mainnet:** `9XQ8gvrBfkxpcfdXj3BF5XrorRGpdpQvoFibqHdyRei6`
+## Architecture
 
-**Documentation:** https://oracle-v2-flow.vercel.app
-
-> **OpenBao** is the open-source fork of HashiCorp Vault (licensed **MPL 2.0** — truly open source).
-> HashiCorp Vault switched to BSL 1.1 in 2023. OpenBao was forked by the Linux Foundation to keep it open.
-> The HTTP API is **100% compatible** — same endpoints, same auth headers, same env vars.
-
----
-
-## Features (vs V1)
-
-| Feature | V1 (Current) | V2 (This) |
-|---------|-------------|-----------|
-| Key storage | JSON files on disk | Transit (non-exportable, HSM-backed) |
-| Key theft impact | Permanent compromise | Revoke token instantly |
-| Price validation | DISABLED | Active (±20% bounds) |
-| On-chain bounds | None | ±20% from last price |
-| On-chain median | None | Built-in permissionless |
-| Circuit breaker | None | Admin pause/resume |
-| Key rotation | Redeploy program | Admin instruction |
-| Staleness | Client-side only | On-chain (30s threshold) |
-| Signing backend | Local key file | OpenBao Transit (MPL 2.0) |
-
----
-
-## Quick Start
-
-**Fully self-contained — one command:**
-
-```bash
-cd relay && ./run-demo.sh
+```
+Price Sources (Pyth + Coinbase + Kraken + MEXC + KuCoin)
+    ↓ every 3s
+Price Feed Server (:8281)
+    ↓ every 10s
+5 Docker Relay Clients (TypeScript, @solana/web3.js)
+    ↓ sign via OpenBao Transit (Ed25519)
+    ↓ Ed25519SigVerify precompile + batch_submit_prices
+    ↓ submit to X1 RPC
+Oracle Vault Program (on-chain, Anchor/Solana)
+    → verifies Transit signature via Ed25519 precompile introspection
+    → writes 6 asset prices × 5 relay slots to PDA
+    → consumer dApps read median prices from PDA
 ```
 
-That's it. The script:
-1. Downloads OpenBao binary (first run only, ~15MB)
-2. Starts OpenBao in dev mode (auto-initialized, auto-unsealed)
-3. Configures Transit secrets engine + Ed25519 key
-4. Runs the TypeScript demo
-5. Tears down OpenBao when done
+### Key Design Decisions
 
----
+- **Any wallet** can submit prices — authorization is via Transit Ed25519 signature, not wallet pubkey
+- **OpenBao Transit** (open-source Vault fork, MPL 2.0) holds the signing key — relay clients never touch private keys
+- **5 independent relays** submit prices every ~10 seconds with staggered timing
+- **25,000 CU budget** per transaction (actual usage ~12,500 CU)
+- **6 decimals** precision for all prices
 
-## Manual Steps
+## Components
 
+### `programs/oracle-vault/` — On-Chain Program (Anchor/Solana)
+
+The Solana program that stores and validates price submissions.
+
+- Verifies Ed25519 signatures by introspecting the `Ed25519SigVerify` precompile instruction in the same transaction
+- Stores prices in 5 relay slots per asset (6 assets × 5 slots = 30 price entries)
+- Admin can rotate the oracle public key without redeploying
+
+**Build:**
 ```bash
-cd relay
+cd programs/oracle-vault
+cargo-build-sbf
+```
 
-# 1. Install npm dependencies (one-time)
+**Deploy:**
+```bash
+solana program deploy target/deploy/oracle_vault.so --url https://rpc.mainnet.x1.xyz
+```
+
+### `relay/` — Original Demo Relay (Node.js)
+
+The original demonstration relay that shows OpenBao Transit sign/verify flow. Good for understanding the concept.
+
+### `relay-clients/` — Production Relay (TypeScript + Docker)
+
+Production relay clients that fetch prices, sign via OpenBao Transit, and submit on-chain.
+
+**Files:**
+- `relay-client.ts` — TypeScript relay client with ComputeBudget limits
+- `Dockerfile` — Multi-stage build (compile TS → slim runtime)
+- `docker-compose.yml` — 5 relay containers with keypair mounts
+- `init-oracle.mjs` — Initialize the on-chain PDA with Transit public key
+- `submit-test.mjs` — Test single price submission
+
+**Setup:**
+```bash
+cd relay-clients
 npm install
 
-# 2. Start OpenBao and configure Transit
-bash src/setup-openbao.sh
+# Generate relay keypairs
+for i in 1 2 3 4 5; do
+  solana-keygen new --outfile keys/relay-${i}.json --no-bip39-passphrase
+done
 
-# 3. Run the demo
-npx tsx src/demo.ts
+# Fund each relay wallet with XNT for transaction fees
+# ...
 
-# 4. Run security tests only
-npx tsx src/security-tests.ts
-
-# 5. Tear down when done
-bash src/teardown-openbao.sh
+# Build and start
+docker compose up -d --build
 ```
 
----
+**Environment variables:**
+| Variable | Default | Description |
+|---|---|---|
+| `CLIENT_ID` | `relay-0` | Relay identifier (relay-1 through relay-5) |
+| `VAULT_ADDR` | `http://127.0.0.1:8200` | OpenBao address |
+| `VAULT_TOKEN` | — | OpenBao relay token (sign/verify policy) |
+| `KEY_NAME` | `oracle-price-signer` | Transit key name |
+| `INTERVAL` | `10` | Seconds between submissions |
+| `PRICE_FEED` | `http://127.0.0.1:8281` | Price feed server URL |
+| `KEYPAIR_PATH` | — | Path to relay wallet keypair JSON |
+| `RPC_URL` | `https://rpc.mainnet.x1.xyz` | Solana/X1 RPC endpoint |
+| `PROGRAM_ID` | — | Oracle Vault program ID |
+| `TRANSIT_PUBKEY` | — | Base64-encoded Transit Ed25519 public key |
+| `CU_BUDGET` | `25000` | Compute unit budget per transaction |
 
-## run-demo.sh Options
+### `price-feed/` — Multi-Source Price Server
+
+Python server that aggregates prices from 5 sources every 3 seconds.
+
+**Sources:**
+- Pyth Network (Hermes REST API, batched)
+- Coinbase
+- Kraken
+- MEXC
+- KuCoin
+
+**Assets:** BTC, ETH, SOL, HYPE, ZEC, FARTCOIN + TSLA/NVDA/MSTR/GOLD/SILVER (via Pyth during market hours)
 
 ```bash
-./run-demo.sh                # Setup + run demo + tear down (default)
-./run-demo.sh --setup-only   # Just start OpenBao, then exit
-./run-demo.sh --no-teardown  # Run demo, leave OpenBao running
-./run-demo.sh --teardown-only # Just stop OpenBao
+python3 price-feed/price-feed.py
+# Serves on :8281
 ```
 
----
+### `dashboard/` — Web Dashboard
 
-## OpenBao vs HashiCorp Vault
+Real-time monitoring dashboard with two tabs:
 
-| | OpenBao | HashiCorp Vault |
-|---|---------|----------------|
-| License | **MPL 2.0** (open source) | BSL 1.1 (source-available) |
-| Governance | Linux Foundation | HashiCorp / IBM |
-| HTTP API | Identical | Original |
-| CLI | `bao` | `vault` |
-| Compatible | Yes (drop-in) | — |
+1. **Relay Clients** — Vault health, relay card controls, security tests, live Docker feed (SSE)
+2. **On-Chain Program** — PDA state reader showing per-asset median prices and relay slot freshness
 
-OpenBao was forked in 2023 when HashiCorp changed Vault's license from MPL 2.0 to BSL 1.1.
-The Transit API, Transit endpoints, and auth headers are **byte-for-byte compatible**.
+```bash
+# Serve dashboard
+cd dashboard
+python3 -m http.server 8280
 
----
-
-## Structure
-
-```
-programs/oracle-v2/src/lib.rs  — Anchor on-chain program (Rust)
-relay/
-  run-demo.sh                   — Single entry point (runs everything)
-  src/
-    setup-openbao.sh             — Download + start OpenBao, configure Transit
-    teardown-openbao.sh          — Stop OpenBao + clean up (auto-generated)
-    vault-client.ts              — TransitClient HTTP client (VaultClient alias)
-    price-fetcher.ts             — CoinGecko + X1 Oracle SSE
-    price-validator.ts           — Local bounds + staleness + median
-    oracle-relay.ts              — Full relay loop
-    security-tests.ts            — 6 security tests
-    demo.ts                      — End-to-end demo entry point
-  openbao-creds.json             — Generated by setup-openbao.sh (gitignored)
-test-mainnet.ts                  — X1 mainnet integration test
+# Start SSE bridge (streams Docker logs to dashboard)
+python3 sse-bridge.py
+# Serves SSE on :8282
 ```
 
----
+## OpenBao Setup
 
-## Credentials File (openbao-creds.json)
+```bash
+# Install OpenBao
+curl -sL https://github.com/openbao/openbao/releases/download/v2.5.2/bao_2.5.2_linux_amd64.deb -o bao.deb
+sudo dpkg -i bao.deb
 
-Created by `setup-openbao.sh`, read by `demo.ts` and `security-tests.ts`:
+# Initialize (3-of-5 Shamir)
+bao operator init -key-shares=5 -key-threshold=3
 
-```json
-{
-  "vault_addr": "http://127.0.0.1:8200",
-  "root_token": "oracle-demo-root-token",
-  "relay_token": "hvs.xxx...",
-  "key_name": "oracle-price-signer",
-  "pid": 12345,
-  "backend": "openbao",
-  "version": "2.5.2"
-}
+# Enable Transit engine
+bao secrets enable transit
+
+# Create Ed25519 signing key
+bao write transit/keys/oracle-price-signer type=ed25519 exportable=false
+
+# Create scoped relay policy
+bao policy write oracle-relay - <<EOF
+path "transit/sign/oracle-price-signer" { capabilities = ["update"] }
+path "transit/verify/oracle-price-signer" { capabilities = ["update"] }
+EOF
+
+# Create relay token
+bao token create -policy=oracle-relay -period=720h
 ```
 
-The `relay_token` has a scoped policy: **sign + verify only, no export**.
+## Deployed Instances
 
----
+### X1 Mainnet
+- **Program:** `9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2`
+- **State PDA:** `8XZBqbKhFXHqNGzxV3Tt6gEs9r8ZrNghsRg7zBwLMGJf`
+- **Assets:** BTC (1), ETH (2), SOL (3), HYPE (4), ZEC (5), FARTCOIN (6)
 
-## Security Tests (6 total)
+## Security Model
 
-1. **Key export blocked** — 403 Forbidden (policy enforcement)
-2. **Tamper detection** — Modified data rejected by Ed25519 verify
-3. **Invalid token rejected** — Fake token gets 403
-4. **Price bounds enforced** — >20% spike correctly rejected
-5. **Staleness detection** — 60s-old price flagged (limit: 30s)
-6. **Backend version correct** — OpenBao version string is valid semver
+1. **Transit key is non-exportable** — private key never leaves OpenBao
+2. **Relay token is scoped** — can only sign and verify, not read/export keys
+3. **On-chain verification** — program introspects Ed25519SigVerify precompile, cannot be spoofed
+4. **Any wallet submits** — relay wallets only need XNT for fees, no privileged keys
+5. **Admin-only key rotation** — oracle public key can be updated by program admin
 
----
+## License
 
-## 10 Assets
-
-BTC, ETH, SOL, HYPE, ZEC, TSLA, NVDA, MSTR, GOLD, SILVER
-
----
-
-## Requirements
-
-- Linux x86_64 (amd64)
-- Node.js 18+ (for `npx tsx`)
-- `curl` or `wget` (for binary download)
-- `python3` (for JSON parsing in setup script)
-- Internet access (first run only — to download OpenBao binary)
+MIT

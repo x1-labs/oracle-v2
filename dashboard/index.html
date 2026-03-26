@@ -1,0 +1,2037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script>
+    // Polyfill crypto.randomUUID for non-HTTPS contexts (fixes X1 Wallet extension error)
+    if (typeof crypto !== 'undefined' && !crypto.randomUUID) {
+      crypto.randomUUID = function() {
+        const a = new Uint8Array(16);
+        crypto.getRandomValues(a);
+        a[6] = (a[6] & 0x0f) | 0x40;
+        a[8] = (a[8] & 0x3f) | 0x80;
+        const h = [...a].map(b => b.toString(16).padStart(2, '0'));
+        return `${h.slice(0,4).join('')}-${h.slice(4,6).join('')}-${h.slice(6,8).join('')}-${h.slice(8,10).join('')}-${h.slice(10).join('')}`;
+      };
+    }
+  </script>
+  <title>Oracle Vault — Transit Signing Dashboard</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --bg1: #111111;
+      --bg2: #161616;
+      --bg3: #1c1c1c;
+      --border: #2a2a2a;
+      --border-hover: #3a3a3a;
+      --text: #ededed;
+      --text-muted: #888;
+      --text-dim: #555;
+      --purple: #a855f7;
+      --purple-dim: #7c3aed;
+      --purple-glow: rgba(168,85,247,0.15);
+      --teal: #2dd4bf;
+      --teal-dim: #0d9488;
+      --teal-glow: rgba(45,212,191,0.15);
+      --green: #22c55e;
+      --green-dim: #16a34a;
+      --red: #ef4444;
+      --red-dim: #dc2626;
+      --yellow: #eab308;
+      --yellow-dim: #ca8a04;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    html { font-size: 14px; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg1); }
+    ::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 3px; }
+
+    /* ── TOP BAR ── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(10,10,10,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .topbar-title {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+    .topbar-title span { color: var(--purple); }
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .badge.version { color: var(--teal); border-color: var(--teal-dim); }
+    .badge.connection { color: var(--text-muted); }
+
+    /* ── HEALTH DOT ── */
+    .health-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .health-dot.ok {
+      background: var(--green);
+      box-shadow: 0 0 0 0 rgba(34,197,94,0.4);
+      animation: pulse-green 2s infinite;
+    }
+    .health-dot.error { background: var(--red); }
+    @keyframes pulse-green {
+      0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
+      70%  { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+      100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+    }
+    .health-label { font-size: 12px; font-weight: 500; }
+    .health-label.ok { color: var(--green); }
+    .health-label.error { color: var(--red); }
+
+    /* ── MAIN LAYOUT ── */
+    .main {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px 24px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* ── SECTION HEADERS ── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+    }
+
+    /* ── PANELS ── */
+    .panel {
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+      transition: border-color 0.2s;
+    }
+    .panel:hover { border-color: var(--border-hover); }
+
+    /* ── VAULT STATUS ── */
+    .vault-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+    }
+    .vault-stat {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .vault-stat-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .vault-stat-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .vault-stat-value.ok { color: var(--green); }
+    .vault-stat-value.warn { color: var(--yellow); }
+    .vault-stat-value.err { color: var(--red); }
+    .vault-stat-value.mono { font-family: monospace; font-size: 10px; color: var(--teal); }
+
+    /* ── KEY INFO ── */
+    .key-info {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .key-info-title {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+    }
+    .key-pubkeys {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .key-pubkey {
+      font-family: monospace;
+      font-size: 10px;
+      color: var(--teal);
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 5px 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+      word-break: break-all;
+    }
+    .key-pubkey:hover { background: var(--bg3); }
+
+    /* ── BUTTONS ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: var(--font);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--purple-dim);
+      border-color: var(--purple);
+      color: #fff;
+    }
+    .btn-primary:not(:disabled):hover {
+      background: var(--purple);
+      box-shadow: 0 0 14px rgba(168,85,247,0.3);
+    }
+    .btn-secondary {
+      background: var(--bg2);
+      border-color: var(--border);
+      color: var(--text-muted);
+    }
+    .btn-secondary:not(:disabled):hover {
+      background: var(--bg3);
+      border-color: var(--border-hover);
+      color: var(--text);
+    }
+    .btn-teal {
+      background: rgba(13,148,136,0.3);
+      border-color: var(--teal-dim);
+      color: var(--teal);
+    }
+    .btn-teal:not(:disabled):hover {
+      background: rgba(45,212,191,0.2);
+      box-shadow: 0 0 14px rgba(45,212,191,0.2);
+    }
+    .btn-danger {
+      background: rgba(220,38,38,0.2);
+      border-color: var(--red-dim);
+      color: var(--red);
+    }
+    .btn-danger:not(:disabled):hover {
+      background: rgba(239,68,68,0.25);
+      box-shadow: 0 0 14px rgba(239,68,68,0.2);
+    }
+    .btn-sm { padding: 4px 10px; font-size: 11px; border-radius: 5px; }
+
+    /* ── SPINNER ── */
+    .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid transparent;
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── RELAY GRID ── */
+    .relay-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .relay-grid .relay-card:nth-child(4),
+    .relay-grid .relay-card:nth-child(5) {
+      /* keep the last two cards centered when in 3-col layout */
+    }
+
+    /* ── RELAY CARD ── */
+    .relay-card {
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      transition: border-color 0.2s, box-shadow 0.3s;
+      display: flex;
+      flex-direction: column;
+    }
+    .relay-card.signing {
+      border-color: var(--purple-dim);
+      box-shadow: 0 0 20px var(--purple-glow);
+      animation: sign-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes sign-pulse {
+      0%, 100% { box-shadow: 0 0 12px var(--purple-glow); }
+      50%       { box-shadow: 0 0 28px rgba(168,85,247,0.3); }
+    }
+    .relay-card.error-state {
+      border-color: var(--red-dim);
+    }
+    .relay-card.ok-state {
+      border-color: var(--green-dim);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+    }
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .card-status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: background 0.3s;
+    }
+    .card-status-dot.idle { background: var(--text-dim); }
+    .card-status-dot.signing {
+      background: var(--purple);
+      animation: pulse-purple 1s infinite;
+    }
+    @keyframes pulse-purple {
+      0%   { box-shadow: 0 0 0 0 rgba(168,85,247,0.6); }
+      70%  { box-shadow: 0 0 0 5px rgba(168,85,247,0); }
+      100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
+    }
+    .card-status-dot.ok    { background: var(--green); }
+    .card-status-dot.error { background: var(--red); }
+    .card-status-label {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .card-status-group {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .card-body {
+      padding: 12px 14px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Card controls */
+    .card-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    /* Auto-mode row */
+    .auto-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle {
+      position: relative;
+      width: 32px; height: 18px;
+    }
+    .toggle input { display: none; }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      transition: all 0.2s;
+    }
+    .toggle input:checked + .toggle-track {
+      background: var(--purple-dim);
+      border-color: var(--purple);
+    }
+    .toggle-thumb {
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 12px; height: 12px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      transition: all 0.2s;
+    }
+    .toggle input:checked ~ .toggle-thumb {
+      left: 16px;
+      background: #fff;
+    }
+    .toggle-label { font-size: 11px; color: var(--text-muted); }
+    .interval-slider {
+      -webkit-appearance: none;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+      flex: 1;
+      min-width: 60px;
+      cursor: pointer;
+    }
+    .interval-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--purple);
+      cursor: pointer;
+    }
+    .interval-val {
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      min-width: 30px;
+    }
+
+    /* Price table */
+    .price-table-wrap {
+      overflow-x: auto;
+    }
+    .price-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    .price-table th {
+      text-align: left;
+      padding: 5px 8px;
+      color: var(--text-dim);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+    .price-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(42,42,42,0.5);
+      vertical-align: top;
+    }
+    .price-table tr:last-child td { border-bottom: none; }
+    .asset-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+    }
+    .asset-badge.BTC { background: rgba(247,147,26,0.15); color: #f7931a; }
+    .asset-badge.ETH { background: rgba(98,126,234,0.15); color: #627eea; }
+    .asset-badge.SOL { background: rgba(153,69,255,0.15); color: #9945ff; }
+    .price-val { font-weight: 600; color: var(--text); font-size: 11px; }
+    .sig-cell {
+      font-family: monospace;
+      font-size: 9px;
+      color: var(--teal);
+      cursor: pointer;
+      max-width: 100px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sig-cell:hover { color: var(--purple); }
+    .sig-cell.none { color: var(--text-dim); font-family: var(--font); }
+    .verified-icon { font-size: 12px; }
+    .ts-val { color: var(--text-dim); font-size: 9px; white-space: nowrap; }
+
+    /* Card stats */
+    .card-stats {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .stat-pill {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 3px 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .stat-pill .num { font-weight: 600; color: var(--text); }
+    .stat-pill.err-stat { border-color: rgba(239,68,68,0.3); }
+    .stat-pill.err-stat .num { color: var(--red); }
+
+    .last-action {
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    /* ── SECURITY PANEL ── */
+    .security-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .sec-result {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .sec-result-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .sec-result-name {
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .pass-badge, .fail-badge, .pending-badge, .info-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .pass-badge  { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .fail-badge  { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+    .pending-badge { background: var(--bg3); color: var(--text-dim); border: 1px solid var(--border); }
+    .info-badge  { background: rgba(168,85,247,0.15); color: var(--purple); border: 1px solid rgba(168,85,247,0.3); }
+    .sec-detail {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    .sec-detail code {
+      font-family: monospace;
+      font-size: 10px;
+      background: var(--bg3);
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: var(--teal);
+    }
+
+    /* ── ACTIVITY LOG ── */
+    .log-wrap {
+      height: 240px;
+      overflow-y: auto;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 11px;
+    }
+    .log-entry {
+      display: flex;
+      flex-direction: row;
+      align-items: baseline;
+      gap: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      line-height: 1.6;
+      white-space: nowrap;
+    }
+    .log-entry:hover { background: var(--bg2); }
+    .log-entry.success .log-result { color: var(--green); }
+    .log-entry.error   .log-result { color: var(--red); }
+    .log-entry.warn    .log-result { color: var(--yellow); }
+    .log-entry.info    .log-result { color: var(--teal); }
+    .log-ts    { color: var(--text-dim); font-size: 10px; min-width: 58px; flex-shrink: 0; }
+    .log-client { color: var(--purple); font-weight: 500; min-width: 56px; flex-shrink: 0; }
+    .log-action { color: var(--teal); min-width: 60px; flex-shrink: 0; }
+    .log-result { font-weight: 600; flex-shrink: 0; }
+    .log-detail { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── TOAST ── */
+    .toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: var(--text);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      animation: toast-in 0.2s ease;
+      max-width: 300px;
+      pointer-events: auto;
+    }
+    .toast.ok    { border-color: var(--green-dim); }
+    .toast.error { border-color: var(--red-dim); }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateX(20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 900px) {
+      .relay-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 580px) {
+      .relay-grid { grid-template-columns: 1fr; }
+      .log-entry { flex-wrap: wrap; }
+      .log-client, .log-action { display: none; }
+      .vault-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    /* ── EMPTY STATE ── */
+    .empty-state {
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 11px;
+      padding: 20px;
+    }
+
+    /* ── TABS ── */
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      position: sticky;
+      top: 48px;
+      z-index: 90;
+    }
+    .tab-btn {
+      padding: 10px 20px;
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active {
+      color: var(--purple);
+      border-bottom-color: var(--purple);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── ON-CHAIN TABLE ── */
+    .onchain-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .onchain-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .onchain-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .onchain-card-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--purple);
+    }
+    .onchain-card-price {
+      font-size: 20px;
+      font-weight: 700;
+      font-family: 'SF Mono', monospace;
+    }
+    .onchain-slots {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .onchain-slot {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px;
+      text-align: center;
+      font-size: 10px;
+    }
+    .onchain-slot.fresh { border-color: var(--green); }
+    .onchain-slot.stale { border-color: var(--yellow); }
+    .onchain-slot.empty { border-color: var(--border); opacity: 0.4; }
+    .onchain-slot-label { color: var(--text-dim); margin-bottom: 2px; }
+    .onchain-slot-price { font-family: 'SF Mono', monospace; font-size: 11px; font-weight: 600; }
+    .onchain-slot-time { color: var(--text-dim); font-size: 9px; margin-top: 2px; }
+    .onchain-meta {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      padding: 12px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .onchain-meta-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .onchain-meta-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+    .onchain-meta-value { font-size: 12px; font-family: 'SF Mono', monospace; color: var(--text); }
+  </style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<header class="topbar">
+  <div class="topbar-left">
+    <div id="healthDot" class="health-dot error"></div>
+    <span class="topbar-title">Oracle <span>Vault</span> — Transit Signing Dashboard</span>
+  </div>
+  <div class="topbar-right">
+    <span id="healthLabel" class="badge health-label error">Connecting…</span>
+    <span id="versionBadge" class="badge version">OpenBao —</span>
+    <span class="badge connection">64.20.42.194:8200</span>
+  </div>
+</header>
+
+<!-- TAB BAR -->
+<nav class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('relay')">Relay Clients</button>
+  <button class="tab-btn" onclick="switchTab('onchain')">On-Chain Program</button>
+</nav>
+
+<main class="main">
+
+<!-- TAB 1: RELAY CLIENTS (existing content) -->
+<div id="tab-relay" class="tab-panel active">
+
+  <!-- SECTION 1: VAULT STATUS -->
+  <section>
+    <div class="section-header">
+      <span class="section-title">Vault Status</span>
+      <button class="btn btn-secondary btn-sm" onclick="refreshVaultStatus()">
+        <span id="refreshSpinner" style="display:none" class="spinner"></span>
+        Refresh
+      </button>
+    </div>
+    <div class="panel">
+      <div class="vault-grid" id="vaultStatGrid">
+        <div class="vault-stat"><div class="vault-stat-label">Initialized</div><div class="vault-stat-value" id="vs-init">—</div></div>
+        <div class="vault-stat"><div class="vault-stat-label">Sealed</div><div class="vault-stat-value" id="vs-sealed">—</div></div>
+        <div class="vault-stat"><div class="vault-stat-label">Version</div><div class="vault-stat-value" id="vs-version">—</div></div>
+        <div class="vault-stat"><div class="vault-stat-label">Cluster Name</div><div class="vault-stat-value" id="vs-cluster">—</div></div>
+        <div class="vault-stat"><div class="vault-stat-label">Server Time</div><div class="vault-stat-value" id="vs-time">—</div></div>
+      </div>
+      <div class="key-info" id="keyInfoSection">
+        <div class="key-info-title">Transit Key: oracle-price-signer</div>
+        <div class="vault-grid" id="keyStatGrid">
+          <div class="vault-stat"><div class="vault-stat-label">Type</div><div class="vault-stat-value" id="ki-type">—</div></div>
+          <div class="vault-stat"><div class="vault-stat-label">Latest Version</div><div class="vault-stat-value" id="ki-version">—</div></div>
+          <div class="vault-stat"><div class="vault-stat-label">Min Decrypt Ver.</div><div class="vault-stat-value" id="ki-mindecrypt">—</div></div>
+          <div class="vault-stat"><div class="vault-stat-label">Exportable</div><div class="vault-stat-value" id="ki-exportable">—</div></div>
+        </div>
+        <div class="key-pubkeys" id="keyPubkeys" style="margin-top:10px;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 2: RELAY CLIENTS -->
+  <section>
+    <div class="section-header">
+      <span class="section-title">Relay Clients</span>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-primary btn-sm" onclick="fetchAllPrices()">Fetch All Prices</button>
+        <button class="btn btn-teal btn-sm" onclick="signAllClients()">Sign All</button>
+      </div>
+    </div>
+    <div class="relay-grid" id="relayGrid"></div>
+  </section>
+
+  <!-- SECTION 3: SECURITY TESTS -->
+  <section>
+    <div class="section-header">
+      <span class="section-title">Security Tests</span>
+      <button class="btn btn-danger btn-sm" id="secTestBtn" onclick="runAllSecurityTests()">
+        <span id="secSpinner" style="display:none" class="spinner"></span>
+        Run All Security Tests
+      </button>
+    </div>
+    <div class="panel">
+      <div class="security-grid" id="securityGrid">
+        <div class="sec-result">
+          <div class="sec-result-header">
+            <span class="sec-result-name">1. Key Export Test</span>
+            <span class="pending-badge" id="sec-badge-export">Pending</span>
+          </div>
+          <div class="sec-detail" id="sec-detail-export">
+            Attempts to export signing key with relay token → expects <code>403</code>.
+          </div>
+        </div>
+        <div class="sec-result">
+          <div class="sec-result-header">
+            <span class="sec-result-name">2. Tamper Detection</span>
+            <span class="pending-badge" id="sec-badge-tamper">Pending</span>
+          </div>
+          <div class="sec-detail" id="sec-detail-tamper">
+            Signs data, modifies price, re-verifies → signature should fail.
+          </div>
+        </div>
+        <div class="sec-result">
+          <div class="sec-result-header">
+            <span class="sec-result-name">3. Bad Token Test</span>
+            <span class="pending-badge" id="sec-badge-badtoken">Pending</span>
+          </div>
+          <div class="sec-detail" id="sec-detail-badtoken">
+            Signs with fake token → expects <code>403</code>.
+          </div>
+        </div>
+        <div class="sec-result">
+          <div class="sec-result-header">
+            <span class="sec-result-name">4. Signature Uniqueness</span>
+            <span class="pending-badge" id="sec-badge-unique">Pending</span>
+          </div>
+          <div class="sec-detail" id="sec-detail-unique">
+            Signs same data twice → compares signatures.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 4: LIVE DOCKER FEED -->
+  <section>
+    <div class="section-header">
+      <span class="section-title">Live Docker Relay Feed</span>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div class="health-dot" id="sseDot" style="width:8px;height:8px;"></div>
+          <span style="font-size:11px;color:var(--text-muted)" id="sseStatus">Connecting…</span>
+        </div>
+        <span style="font-size:11px;color:var(--text-dim)" id="sseStats">0 events</span>
+      </div>
+    </div>
+    <div class="panel">
+      <!-- Live price ticker bar -->
+      <div id="liveTicker" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
+      <!-- Per-client live status -->
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px;" id="liveClientGrid"></div>
+      <!-- Live event stream -->
+      <div class="log-wrap" id="liveFeedWrap" style="max-height:300px;">
+        <div class="empty-state">Waiting for SSE connection…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5: ACTIVITY LOG -->
+  <section>
+    <div class="section-header">
+      <span class="section-title">Activity Log</span>
+      <button class="btn btn-secondary btn-sm" onclick="clearLog()">Clear Log</button>
+    </div>
+    <div class="log-wrap" id="logWrap">
+      <div class="empty-state">No activity yet. Fetch prices or run a test to start.</div>
+    </div>
+  </section>
+
+</div><!-- end tab-relay -->
+
+<!-- TAB 2: ON-CHAIN PROGRAM -->
+<div id="tab-onchain" class="tab-panel">
+
+  <section>
+    <div class="section-header">
+      <span class="section-title">On-Chain Program Status</span>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span style="font-size:11px;color:var(--text-dim)" id="onchainLastRefresh">—</span>
+        <button class="btn btn-primary btn-sm" onclick="refreshOnchainState()">
+          <span id="onchainSpinner" style="display:none" class="spinner"></span>
+          Refresh
+        </button>
+      </div>
+    </div>
+
+    <!-- Program metadata -->
+    <div class="onchain-meta" id="onchainMeta">
+      <div class="onchain-meta-item">
+        <span class="onchain-meta-label">Program ID</span>
+        <span class="onchain-meta-value" id="oc-program">9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2</span>
+      </div>
+      <div class="onchain-meta-item">
+        <span class="onchain-meta-label">State PDA</span>
+        <span class="onchain-meta-value" id="oc-pda">8XZBqbKhFXHqNGzxV3Tt6gEs9r8ZrNghsRg7zBwLMGJf</span>
+      </div>
+      <div class="onchain-meta-item">
+        <span class="onchain-meta-label">Admin</span>
+        <span class="onchain-meta-value" id="oc-admin">—</span>
+      </div>
+      <div class="onchain-meta-item">
+        <span class="onchain-meta-label">Oracle Pubkey</span>
+        <span class="onchain-meta-value" id="oc-oracle-key">—</span>
+      </div>
+      <div class="onchain-meta-item">
+        <span class="onchain-meta-label">Decimals</span>
+        <span class="onchain-meta-value" id="oc-decimals">—</span>
+      </div>
+      <div class="onchain-meta-item">
+        <span class="onchain-meta-label">Account Size</span>
+        <span class="onchain-meta-value" id="oc-size">—</span>
+      </div>
+    </div>
+
+    <!-- Asset price cards -->
+    <div class="onchain-grid" id="onchainGrid">
+      <div class="empty-state">Click Refresh to load on-chain state…</div>
+    </div>
+  </section>
+
+</div><!-- end tab-onchain -->
+
+</main>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+'use strict';
+
+/* ─────────────────── CONFIG ─────────────────── */
+const VAULT_URL    = 'http://64.20.42.194:8200';
+const RELAY_TOKEN  = 's.0amx9flmlxtFIpgTH9EKQKMS';
+const ROOT_TOKEN   = 's.ecNsxDWESx6WtMBjE9eCacSp';
+const TRANSIT_KEY  = 'oracle-price-signer';
+const CLIENTS      = ['relay-1','relay-2','relay-3','relay-4','relay-5'];
+const PRICE_FEED   = 'http://64.20.42.194:8281';
+const ALL_ASSETS   = ['BTC','ETH','SOL','USDC','USDT','BONK','WIF','JUP','RAY','PYTH','W','JTO','RENDER','HNT','ORCA','mSOL','POPCAT'];
+const ASSETS       = ['bitcoin','ethereum','solana'];
+const ASSET_SHORT  = { bitcoin:'BTC', ethereum:'ETH', solana:'SOL' };
+
+/* ─────────────────── STATE ─────────────────── */
+const state = {};
+CLIENTS.forEach(id => {
+  state[id] = {
+    prices: {},          // { BTC: {usd: 65000, ts: 1234} }
+    rows: [],            // [{asset, price, input, sig, verified, ts}]
+    stats: { signs: 0, verifies: 0, errors: 0, startTs: Date.now() },
+    status: 'idle',      // idle | signing | ok | error
+    autoInterval: null,
+    autoSec: 5,
+    lastAction: null,
+  };
+});
+
+let logEntries = [];
+let vaultAutoRefresh = null;
+
+/* ─────────────────── UTILS ─────────────────── */
+function ts() {
+  return new Date().toLocaleTimeString('en-US', { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+function shortDate() {
+  return new Date().toISOString().replace('T',' ').slice(0,19);
+}
+function b64(str) {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+function trunc(s, n=32) {
+  if (!s) return '—';
+  return s.length > n ? s.slice(0,n)+'…' : s;
+}
+function copyToClip(text) {
+  navigator.clipboard.writeText(text).catch(()=>{});
+  toast('Copied to clipboard', 'ok');
+}
+function toast(msg, type='ok', dur=3000) {
+  const c = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity 0.3s'; setTimeout(()=>el.remove(), 300); }, dur);
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ─────────────────── VAULT API ─────────────────── */
+async function vaultGet(path, token=ROOT_TOKEN) {
+  const r = await fetch(`${VAULT_URL}${path}`, {
+    headers: { 'X-Vault-Token': token }
+  });
+  const body = await r.json().catch(() => ({}));
+  return { status: r.status, body };
+}
+
+async function vaultPost(path, payload, token=RELAY_TOKEN) {
+  const r = await fetch(`${VAULT_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Vault-Token': token },
+    body: JSON.stringify(payload)
+  });
+  const body = await r.json().catch(() => ({}));
+  return { status: r.status, body };
+}
+
+/* ─────────────────── VAULT STATUS ─────────────────── */
+async function refreshVaultStatus() {
+  const spinner = document.getElementById('refreshSpinner');
+  spinner.style.display = 'inline-block';
+
+  try {
+    // Health
+    const health = await vaultGet('/v1/sys/health');
+    const h = health.body;
+
+    const dot = document.getElementById('healthDot');
+    const lbl = document.getElementById('healthLabel');
+    const ver = document.getElementById('versionBadge');
+
+    const ok = health.status === 200 || health.status === 429; // 200 = unsealed, 429 = standby
+    dot.className = 'health-dot ' + (ok ? 'ok' : 'error');
+    lbl.className = 'badge health-label ' + (ok ? 'ok' : 'error');
+    lbl.textContent = ok ? 'Unsealed' : (health.status === 503 ? 'Sealed' : 'Unreachable');
+    ver.textContent = 'OpenBao ' + (h.version || '—');
+
+    setVs('vs-init',    h.initialized !== undefined ? (h.initialized ? 'true' : 'false') : '—', h.initialized ? 'ok' : 'err');
+    setVs('vs-sealed',  h.sealed !== undefined ? (h.sealed ? 'true' : 'false') : '—', h.sealed ? 'warn' : 'ok');
+    setVs('vs-version', h.version || '—');
+    setVs('vs-cluster', h.cluster_name || h.cluster_id?.slice(0,12) || '—');
+
+    // Server time from Date header or local
+    const now = new Date().toLocaleTimeString();
+    setVs('vs-time', now);
+
+    addLog('vault', 'health', ok ? 'ok' : 'error', `HTTP ${health.status}`, ok ? 'success' : 'error');
+
+    // Key info
+    const ki = await vaultGet('/v1/transit/keys/' + TRANSIT_KEY, ROOT_TOKEN);
+    if (ki.status === 200 && ki.body.data) {
+      const d = ki.body.data;
+      setVs('ki-type',       d.type || '—');
+      setVs('ki-version',    d.latest_version || '—');
+      setVs('ki-mindecrypt', d.min_decryption_version || '—');
+      setVs('ki-exportable', d.exportable !== undefined ? String(d.exportable) : '—', d.exportable ? 'warn' : 'ok');
+
+      // Public keys
+      const pkEl = document.getElementById('keyPubkeys');
+      pkEl.innerHTML = '';
+      if (d.keys) {
+        Object.entries(d.keys).forEach(([ver, info]) => {
+          const pk = typeof info === 'object' ? info.public_key : info;
+          if (!pk) return;
+          const el = document.createElement('div');
+          el.className = 'key-pubkey';
+          el.title = 'Click to copy';
+          el.textContent = `v${ver}: ${pk}`;
+          el.onclick = () => copyToClip(pk);
+          pkEl.appendChild(el);
+        });
+      }
+    } else {
+      ['ki-type','ki-version','ki-mindecrypt','ki-exportable'].forEach(id => setVs(id, '—'));
+      document.getElementById('keyPubkeys').innerHTML = '<div class="sec-detail" style="color:var(--red)">Key info requires root token or key does not exist</div>';
+    }
+  } catch (e) {
+    const dot = document.getElementById('healthDot');
+    dot.className = 'health-dot error';
+    document.getElementById('healthLabel').textContent = 'Unreachable';
+    addLog('vault', 'health', 'error', e.message, 'error');
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+function setVs(id, val, cls='') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = val;
+  el.className = 'vault-stat-value' + (cls ? ` ${cls}` : '');
+}
+
+/* ─────────────────── RELAY CARDS ─────────────────── */
+function buildRelayCards() {
+  const grid = document.getElementById('relayGrid');
+  grid.innerHTML = '';
+  CLIENTS.forEach((id, idx) => {
+    const card = document.createElement('div');
+    card.className = 'relay-card';
+    card.id = `card-${id}`;
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="card-title">${id}</span>
+        <div class="card-status-group">
+          <div class="card-status-dot idle" id="dot-${id}"></div>
+          <span class="card-status-label" id="status-${id}">idle</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="card-controls">
+          <button class="btn btn-secondary btn-sm" onclick="fetchPrices('${id}')">
+            <span id="sp-fetch-${id}" style="display:none" class="spinner"></span>Fetch Prices
+          </button>
+          <button class="btn btn-primary btn-sm" onclick="signAll('${id}')">
+            <span id="sp-sign-${id}" style="display:none" class="spinner"></span>Sign All
+          </button>
+          <button class="btn btn-teal btn-sm" onclick="verifyAll('${id}')">
+            <span id="sp-verify-${id}" style="display:none" class="spinner"></span>Verify All
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="tamperTest('${id}')">
+            <span id="sp-tamper-${id}" style="display:none" class="spinner"></span>Tamper Test
+          </button>
+        </div>
+        <div class="auto-row">
+          <label class="toggle-wrap">
+            <label class="toggle">
+              <input type="checkbox" id="auto-${id}" onchange="toggleAuto('${id}')">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+            <span class="toggle-label">Auto</span>
+          </label>
+          <input type="range" class="interval-slider" id="slider-${id}" min="3" max="30" value="5"
+            oninput="updateSlider('${id}')">
+          <span class="interval-val" id="sliderval-${id}">5s</span>
+        </div>
+        <div class="price-table-wrap">
+          <table class="price-table">
+            <thead>
+              <tr>
+                <th>Asset</th><th>Price</th><th>Signature</th><th>✓</th><th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="ptbody-${id}">
+              <tr><td colspan="5" class="empty-state" style="text-align:center;color:var(--text-dim);font-size:10px;padding:12px">No data — click Fetch Prices</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-stats" id="stats-${id}">
+          <div class="stat-pill">Signs: <span class="num" id="stat-signs-${id}">0</span></div>
+          <div class="stat-pill">Verifies: <span class="num" id="stat-verifies-${id}">0</span></div>
+          <div class="stat-pill err-stat">Errors: <span class="num" id="stat-errors-${id}">0</span></div>
+          <div class="stat-pill">Up: <span class="num" id="stat-uptime-${id}">0s</span></div>
+        </div>
+        <div class="last-action" id="lastact-${id}">Last action: —</div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function setCardStatus(id, s) {
+  state[id].status = s;
+  const card = document.getElementById(`card-${id}`);
+  const dot  = document.getElementById(`dot-${id}`);
+  const lbl  = document.getElementById(`status-${id}`);
+  if (!card) return;
+  card.className = 'relay-card' + (s==='signing' ? ' signing' : s==='error' ? ' error-state' : s==='ok' ? ' ok-state' : '');
+  dot.className  = 'card-status-dot ' + s;
+  lbl.textContent = s;
+}
+
+function setSpinner(id, part, show) {
+  const sp = document.getElementById(`sp-${part}-${id}`);
+  if (sp) sp.style.display = show ? 'inline-block' : 'none';
+}
+
+function renderPriceTable(id) {
+  const tbody = document.getElementById(`ptbody-${id}`);
+  if (!tbody) return;
+  const rows = state[id].rows;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-state" style="text-align:center;color:var(--text-dim);font-size:10px;padding:12px">No data</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td><span class="asset-badge ${r.asset}">${r.asset}</span></td>
+      <td class="price-val">$${r.price ? fmtPrice(r.price) : '—'}</td>
+      <td>
+        ${r.sig
+          ? `<span class="sig-cell" title="${r.sig}" onclick="copyToClip('${r.sig.replace(/'/g,"\\'")}')">
+               ${trunc(r.sig, 28)}
+             </span>`
+          : '<span class="sig-cell none">—</span>'}
+      </td>
+      <td class="verified-icon">${r.verified === true ? '✅' : r.verified === false ? '❌' : '·'}</td>
+      <td class="ts-val">${r.ts || '—'}</td>
+    </tr>
+  `).join('');
+}
+
+function updateStats(id) {
+  const s = state[id].stats;
+  const up = Math.floor((Date.now() - s.startTs) / 1000);
+  document.getElementById(`stat-signs-${id}`).textContent    = s.signs;
+  document.getElementById(`stat-verifies-${id}`).textContent = s.verifies;
+  document.getElementById(`stat-errors-${id}`).textContent   = s.errors;
+  document.getElementById(`stat-uptime-${id}`).textContent   = up + 's';
+  if (state[id].lastAction) {
+    document.getElementById(`lastact-${id}`).textContent = 'Last: ' + state[id].lastAction;
+  }
+}
+
+function updateSlider(id) {
+  const v = document.getElementById(`slider-${id}`).value;
+  state[id].autoSec = parseInt(v);
+  document.getElementById(`sliderval-${id}`).textContent = v + 's';
+}
+
+function toggleAuto(id) {
+  const chk = document.getElementById(`auto-${id}`);
+  if (chk.checked) {
+    startAuto(id);
+  } else {
+    stopAuto(id);
+  }
+}
+
+function startAuto(id) {
+  stopAuto(id); // clear existing
+  const tick = async () => {
+    await fetchPrices(id);
+    await signAll(id);
+    await verifyAll(id);
+  };
+  tick();
+  state[id].autoInterval = setInterval(tick, state[id].autoSec * 1000);
+  addLog(id, 'auto', 'started', `every ${state[id].autoSec}s`, 'success');
+}
+
+function stopAuto(id) {
+  if (state[id].autoInterval) {
+    clearInterval(state[id].autoInterval);
+    state[id].autoInterval = null;
+    addLog(id, 'auto', 'stopped', '', 'warn');
+  }
+}
+
+/* ─────────────────── FETCH PRICES ─────────────────── */
+async function fetchPrices(id) {
+  setSpinner(id, 'fetch', true);
+  setCardStatus(id, 'signing');
+  try {
+    const r = await fetch(PRICE_FEED);
+    if (!r.ok) throw new Error(`Price feed HTTP ${r.status}`);
+    const feed = await r.json();
+    const prices = feed.prices || {};
+
+    state[id].prices = {};
+    state[id].rows = ALL_ASSETS.filter(sym => prices[sym]).map(sym => {
+      const price = prices[sym].price;
+      const srcs = (prices[sym].sources || []).join('+');
+      state[id].prices[sym] = price;
+      return { asset: sym, price, input: null, sig: null, verified: null, ts: ts(), sources: srcs };
+    });
+    state[id].lastAction = `Fetched @ ${ts()}`;
+    renderPriceTable(id);
+    setCardStatus(id, 'ok');
+    const summary = state[id].rows.slice(0,5).map(r => `${r.asset}=$${fmtPrice(r.price)}`).join(' | ');
+    const srcInfo = feed.sources ? ` [J:${feed.sources.jupiter||0} D:${feed.sources.dexscreener||0} C:${feed.sources.coingecko||0}]` : '';
+    addLog(id, 'fetch', 'ok', `${state[id].rows.length} tokens${srcInfo} — ${summary}…`, 'success');
+  } catch (e) {
+    state[id].stats.errors++;
+    setCardStatus(id, 'error');
+    addLog(id, 'fetch', 'error', e.message, 'error');
+  } finally {
+    setSpinner(id, 'fetch', false);
+    updateStats(id);
+  }
+}
+
+function fmtPrice(p) {
+  if (p == null) return '—';
+  if (p >= 1000) return p.toLocaleString(undefined, {maximumFractionDigits:2});
+  if (p >= 1) return p.toFixed(2);
+  if (p >= 0.01) return p.toFixed(4);
+  if (p >= 0.0001) return p.toFixed(6);
+  return p.toFixed(8);
+}
+
+async function fetchAllPrices() {
+  for (let i = 0; i < CLIENTS.length; i++) {
+    await fetchPrices(CLIENTS[i]);
+    if (i < CLIENTS.length - 1) await sleep(500);
+  }
+}
+
+/* ─────────────────── SIGN ─────────────────── */
+async function signAll(id) {
+  if (!state[id].rows.length || !state[id].rows[0].price) {
+    toast(`${id}: fetch prices first`, 'error');
+    return;
+  }
+  setSpinner(id, 'sign', true);
+  setCardStatus(id, 'signing');
+
+  for (const row of state[id].rows) {
+    const payload = `${row.asset}:${row.price}:${Date.now()}`;
+    const input = b64(payload);
+    row.input = input;
+    row.sig = null;
+    row.verified = null;
+
+    try {
+      const res = await vaultPost(`/v1/transit/sign/${TRANSIT_KEY}`, {
+        input,
+        marshaling_algorithm: 'jws'
+      });
+      if (res.status === 200 && res.body.data?.signature) {
+        row.sig = res.body.data.signature;
+        row.ts = ts();
+        state[id].stats.signs++;
+        addLog(id, 'sign', 'ok', `${row.asset} → ${trunc(row.sig, 30)}`, 'success');
+      } else {
+        state[id].stats.errors++;
+        addLog(id, 'sign', 'error', `${row.asset}: HTTP ${res.status} ${JSON.stringify(res.body.errors||'')}`, 'error');
+      }
+    } catch (e) {
+      state[id].stats.errors++;
+      addLog(id, 'sign', 'error', `${row.asset}: ${e.message}`, 'error');
+    }
+  }
+  state[id].lastAction = `Signed @ ${ts()}`;
+  renderPriceTable(id);
+  setCardStatus(id, state[id].stats.errors > 0 ? 'error' : 'ok');
+  setSpinner(id, 'sign', false);
+  updateStats(id);
+}
+
+async function signAllClients() {
+  for (const id of CLIENTS) {
+    await signAll(id);
+    await sleep(300);
+  }
+}
+
+/* ─────────────────── VERIFY ─────────────────── */
+async function verifyAll(id) {
+  const rows = state[id].rows.filter(r => r.sig);
+  if (!rows.length) { toast(`${id}: no signatures to verify`, 'error'); return; }
+
+  setSpinner(id, 'verify', true);
+  setCardStatus(id, 'signing');
+
+  for (const row of state[id].rows) {
+    if (!row.sig) { row.verified = null; continue; }
+    try {
+      const res = await vaultPost(`/v1/transit/verify/${TRANSIT_KEY}`, {
+        input: row.input,
+        signature: row.sig,
+        marshaling_algorithm: 'jws'
+      });
+      if (res.status === 200) {
+        row.verified = res.body.data?.valid === true;
+        row.ts = ts();
+        state[id].stats.verifies++;
+        addLog(id, 'verify', row.verified ? 'ok' : 'fail',
+          `${row.asset}: ${row.verified ? '✓ valid' : '✗ invalid'}`, row.verified ? 'success' : 'error');
+      } else {
+        row.verified = false;
+        state[id].stats.errors++;
+        addLog(id, 'verify', 'error', `${row.asset}: HTTP ${res.status}`, 'error');
+      }
+    } catch (e) {
+      row.verified = false;
+      state[id].stats.errors++;
+      addLog(id, 'verify', 'error', `${row.asset}: ${e.message}`, 'error');
+    }
+  }
+  state[id].lastAction = `Verified @ ${ts()}`;
+  renderPriceTable(id);
+  const anyFail = state[id].rows.some(r => r.verified === false);
+  setCardStatus(id, anyFail ? 'error' : 'ok');
+  setSpinner(id, 'verify', false);
+  updateStats(id);
+}
+
+/* ─────────────────── TAMPER TEST ─────────────────── */
+async function tamperTest(id) {
+  if (!state[id].rows.length || !state[id].rows[0].price) {
+    // auto-fetch first
+    await fetchPrices(id);
+  }
+  setSpinner(id, 'tamper', true);
+  setCardStatus(id, 'signing');
+  addLog(id, 'tamper', 'running', 'Sign → modify → verify…', 'warn');
+
+  try {
+    // 1. Sign original
+    const row = state[id].rows[0]; // use BTC for tamper demo
+    const originalPayload = `${row.asset}:${row.price}:${Date.now()}`;
+    const originalInput = b64(originalPayload);
+
+    const signRes = await vaultPost(`/v1/transit/sign/${TRANSIT_KEY}`, {
+      input: originalInput,
+      marshaling_algorithm: 'jws'
+    });
+    if (signRes.status !== 200 || !signRes.body.data?.signature) {
+      throw new Error('Sign failed: ' + JSON.stringify(signRes.body.errors));
+    }
+    const originalSig = signRes.body.data.signature;
+    state[id].stats.signs++;
+    addLog(id, 'tamper', 'signed', `Original ${row.asset}=$${row.price}`, 'success');
+
+    // 2. Modify price by 1 cent
+    const tamperedPrice = parseFloat(row.price) + 0.01;
+    const tamperedPayload = `${row.asset}:${tamperedPrice}:${Date.now()}`;
+    const tamperedInput = b64(tamperedPayload);
+
+    // 3. Verify tampered data with original sig
+    const verRes = await vaultPost(`/v1/transit/verify/${TRANSIT_KEY}`, {
+      input: tamperedInput,
+      signature: originalSig,
+      marshaling_algorithm: 'jws'
+    });
+
+    const tamperDetected = !verRes.body.data?.valid || verRes.status !== 200;
+    state[id].stats.verifies++;
+
+    if (tamperDetected) {
+      addLog(id, 'tamper', '❌ TAMPER DETECTED',
+        `Modified ${row.asset} from $${row.price} → $${tamperedPrice} — signature invalid`, 'success');
+      toast(`${id}: Tamper detected! ❌ Signature rejected.`, 'ok');
+    } else {
+      addLog(id, 'tamper', '⚠️ TAMPER MISSED',
+        'Verification passed despite modified data — unexpected', 'error');
+      toast(`${id}: WARNING — tamper was NOT detected`, 'error');
+    }
+
+    // Update the row to show what happened
+    row.sig = originalSig;
+    row.verified = false; // because tampered data failed
+    row.ts = ts();
+    renderPriceTable(id);
+  } catch (e) {
+    state[id].stats.errors++;
+    addLog(id, 'tamper', 'error', e.message, 'error');
+  } finally {
+    setSpinner(id, 'tamper', false);
+    setCardStatus(id, 'ok');
+    updateStats(id);
+  }
+}
+
+/* ─────────────────── SECURITY TESTS ─────────────────── */
+async function runAllSecurityTests() {
+  const btn = document.getElementById('secTestBtn');
+  const sp  = document.getElementById('secSpinner');
+  btn.disabled = true;
+  sp.style.display = 'inline-block';
+
+  await secTest_keyExport();
+  await secTest_tamperDetect();
+  await secTest_badToken();
+  await secTest_sigUnique();
+
+  btn.disabled = false;
+  sp.style.display = 'none';
+  toast('Security tests complete', 'ok');
+}
+
+function setSecBadge(key, type, label) {
+  const el = document.getElementById(`sec-badge-${key}`);
+  if (!el) return;
+  el.className = `${type}-badge`;
+  el.textContent = label;
+}
+function setSecDetail(key, html) {
+  const el = document.getElementById(`sec-detail-${key}`);
+  if (el) el.innerHTML = html;
+}
+
+async function secTest_keyExport() {
+  setSecBadge('export', 'pending', 'Running…');
+  setSecDetail('export', 'Attempting export with relay token…');
+  try {
+    const res = await vaultGet(`/v1/transit/export/signing-key/${TRANSIT_KEY}`, RELAY_TOKEN);
+    const pass = res.status === 403 || res.status === 405;
+    setSecBadge('export', pass ? 'pass' : 'fail', pass ? '✓ PASS' : '✗ FAIL');
+    setSecDetail('export',
+      `Got HTTP <code>${res.status}</code> with relay token. ` +
+      (pass
+        ? 'Key export blocked — relay token has signing permission only. Policy working correctly.'
+        : `<b>Unexpected response!</b> Expected 403, got ${res.status}. Check export policy.`)
+    );
+    addLog('security', 'key-export', pass ? 'pass' : 'fail', `HTTP ${res.status}`, pass ? 'success' : 'error');
+  } catch (e) {
+    setSecBadge('export', 'fail', '✗ ERROR');
+    setSecDetail('export', `Error: <code>${e.message}</code>`);
+    addLog('security', 'key-export', 'error', e.message, 'error');
+  }
+}
+
+async function secTest_tamperDetect() {
+  setSecBadge('tamper', 'pending', 'Running…');
+  setSecDetail('tamper', 'Signing data, then verifying tampered version…');
+  try {
+    const payload = `BTC:65000.00:${Date.now()}`;
+    const input = b64(payload);
+
+    const sr = await vaultPost(`/v1/transit/sign/${TRANSIT_KEY}`, { input, marshaling_algorithm: 'jws' });
+    if (sr.status !== 200) throw new Error(`Sign failed: ${sr.status}`);
+    const sig = sr.body.data.signature;
+
+    const tampered = b64(`BTC:65000.01:${Date.now()}`);
+    const vr = await vaultPost(`/v1/transit/verify/${TRANSIT_KEY}`, {
+      input: tampered, signature: sig, marshaling_algorithm: 'jws'
+    });
+
+    const detected = !vr.body.data?.valid;
+    setSecBadge('tamper', detected ? 'pass' : 'fail', detected ? '✓ PASS' : '✗ FAIL');
+    setSecDetail('tamper',
+      detected
+        ? `Tamper detected. Original: <code>BTC:65000.00</code> → Modified: <code>BTC:65000.01</code> — verification returned <code>valid:false</code>. Ed25519 integrity confirmed.`
+        : `<b>FAIL:</b> Tampered data passed verification. Investigate key configuration.`
+    );
+    addLog('security', 'tamper-detect', detected ? 'pass' : 'fail',
+      detected ? 'Modified data rejected' : 'FAIL: tampered data accepted', detected ? 'success' : 'error');
+  } catch (e) {
+    setSecBadge('tamper', 'fail', '✗ ERROR');
+    setSecDetail('tamper', `Error: <code>${e.message}</code>`);
+    addLog('security', 'tamper-detect', 'error', e.message, 'error');
+  }
+}
+
+async function secTest_badToken() {
+  setSecBadge('badtoken', 'pending', 'Running…');
+  setSecDetail('badtoken', 'Attempting to sign with fake token…');
+  try {
+    const fakeToken = 's.FAKEFAKEFAKEFAKEFAKEFAKE';
+    const res = await vaultPost(`/v1/transit/sign/${TRANSIT_KEY}`, {
+      input: b64('BTC:65000:1234'),
+      marshaling_algorithm: 'jws'
+    }, fakeToken);
+
+    const pass = res.status === 403 || res.status === 400 || res.status === 401;
+    setSecBadge('badtoken', pass ? 'pass' : 'fail', pass ? '✓ PASS' : '✗ FAIL');
+    setSecDetail('badtoken',
+      `Token: <code>${fakeToken}</code> → HTTP <code>${res.status}</code>. ` +
+      (pass
+        ? 'Unauthorized request rejected. Token validation working correctly.'
+        : `<b>Unexpected:</b> Expected 40x, got ${res.status}.`)
+    );
+    addLog('security', 'bad-token', pass ? 'pass' : 'fail', `HTTP ${res.status}`, pass ? 'success' : 'error');
+  } catch (e) {
+    setSecBadge('badtoken', 'fail', '✗ ERROR');
+    setSecDetail('badtoken', `Error: <code>${e.message}</code>`);
+    addLog('security', 'bad-token', 'error', e.message, 'error');
+  }
+}
+
+async function secTest_sigUnique() {
+  setSecBadge('unique', 'pending', 'Running…');
+  setSecDetail('unique', 'Signing same payload twice, comparing signatures…');
+  try {
+    const payload = b64('BTC:65000:UNIQUETEST');
+
+    const r1 = await vaultPost(`/v1/transit/sign/${TRANSIT_KEY}`, { input: payload, marshaling_algorithm: 'jws' });
+    const r2 = await vaultPost(`/v1/transit/sign/${TRANSIT_KEY}`, { input: payload, marshaling_algorithm: 'jws' });
+
+    if (r1.status !== 200 || r2.status !== 200) throw new Error('Sign failed');
+
+    const sig1 = r1.body.data.signature;
+    const sig2 = r2.body.data.signature;
+    const same = sig1 === sig2;
+
+    setSecBadge('unique', 'info', same ? 'ℹ Deterministic' : 'ℹ Non-deterministic');
+    setSecDetail('unique',
+      same
+        ? `Signatures are <b>identical</b> (deterministic Ed25519). Same key + same input = same signature. This is expected for Ed25519 pure without randomized nonce.<br><code style="font-size:9px;word-break:break-all">${trunc(sig1, 60)}</code>`
+        : `Signatures <b>differ</b> (non-deterministic). Ed25519 may use a randomized nonce variant.<br>Sig1: <code style="font-size:9px">${trunc(sig1,40)}</code><br>Sig2: <code style="font-size:9px">${trunc(sig2,40)}</code>`
+    );
+    addLog('security', 'sig-unique', same ? 'deterministic' : 'non-deterministic',
+      `sig1=${trunc(sig1,20)} sig2=${trunc(sig2,20)}`, 'success');
+  } catch (e) {
+    setSecBadge('unique', 'fail', '✗ ERROR');
+    setSecDetail('unique', `Error: <code>${e.message}</code>`);
+    addLog('security', 'sig-unique', 'error', e.message, 'error');
+  }
+}
+
+/* ─────────────────── ACTIVITY LOG ─────────────────── */
+function addLog(client, action, result, detail, type='success') {
+  const entry = { ts: ts(), client, action, result, detail, type };
+  logEntries.unshift(entry);
+  if (logEntries.length > 100) logEntries.pop();
+  renderLog();
+}
+
+function renderLog() {
+  const wrap = document.getElementById('logWrap');
+  if (!logEntries.length) {
+    wrap.innerHTML = '<div class="empty-state">No activity yet.</div>';
+    return;
+  }
+  wrap.innerHTML = logEntries.map(e => `
+    <div class="log-entry ${e.type}">
+      <span class="log-ts">${e.ts}</span>
+      <span class="log-client">${e.client}</span>
+      <span class="log-action">${e.action}</span>
+      <span class="log-result">${e.result}</span>
+      <span class="log-detail">${e.detail}</span>
+    </div>
+  `).join('');
+}
+
+function clearLog() {
+  logEntries = [];
+  renderLog();
+}
+
+/* ─────────────────── TAB SWITCHING ─────────────────── */
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + tabId).classList.add('active');
+  event.target.classList.add('active');
+  if (tabId === 'onchain' && !onchainLoaded) refreshOnchainState();
+}
+
+/* ─────────────────── ON-CHAIN STATE ─────────────────── */
+const OC_RPC = 'https://rpc.mainnet.x1.xyz';
+const OC_PDA = '8XZBqbKhFXHqNGzxV3Tt6gEs9r8ZrNghsRg7zBwLMGJf';
+const OC_PROGRAM = '9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2';
+const OC_ASSETS = ['BTC', 'ETH', 'SOL', 'HYPE', 'ZEC', 'FARTCOIN'];
+let onchainLoaded = false;
+let onchainRefreshInterval = null;
+
+function b58decode(str) {
+  const alpha = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let n = BigInt(0);
+  for (const c of str) n = n * 58n + BigInt(alpha.indexOf(c));
+  const hex = n.toString(16).padStart(2, '0');
+  const bytes = [];
+  for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+  // leading zeros
+  let pad = 0;
+  for (const c of str) { if (c === '1') pad++; else break; }
+  return new Uint8Array([...Array(pad).fill(0), ...bytes]);
+}
+
+async function fetchAccountData(pubkey) {
+  const resp = await fetch(OC_RPC, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      method: 'getAccountInfo',
+      params: [pubkey, { encoding: 'base64', commitment: 'confirmed' }]
+    })
+  });
+  const json = await resp.json();
+  if (!json.result?.value) return null;
+  const b64 = json.result.value.data[0];
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return { data: bytes, lamports: json.result.value.lamports, size: bytes.length };
+}
+
+function readPubkey(data, offset) {
+  const bytes = data.slice(offset, offset + 32);
+  return b58encode(bytes);
+}
+
+function b58encode(bytes) {
+  const alpha = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let n = BigInt(0);
+  for (const b of bytes) n = n * 256n + BigInt(b);
+  let result = '';
+  while (n > 0n) { const [q, r] = [n / 58n, n % 58n]; result = alpha[Number(r)] + result; n = q; }
+  for (const b of bytes) { if (b === 0) result = '1' + result; else break; }
+  return result || '1';
+}
+
+function readI64(data, offset) {
+  const view = new DataView(data.buffer, data.byteOffset + offset, 8);
+  return Number(view.getBigInt64(0, true));
+}
+
+function parseOracleState(data) {
+  // Skip 8-byte Anchor discriminator
+  let off = 8;
+
+  const admin = readPubkey(data, off); off += 32;
+  const oraclePubkey = Array.from(data.slice(off, off + 32)).map(b => b.toString(16).padStart(2,'0')).join(''); off += 32;
+  const decimals = data[off]; off += 1;
+  const bump = data[off]; off += 1;
+
+  // 6 assets × PriceSlots (5 prices i64 + 5 timestamps i64 = 80 bytes each)
+  const assets = {};
+  for (const name of OC_ASSETS) {
+    const prices = [];
+    for (let i = 0; i < 5; i++) { prices.push(readI64(data, off)); off += 8; }
+    const timestamps = [];
+    for (let i = 0; i < 5; i++) { timestamps.push(readI64(data, off)); off += 8; }
+    assets[name] = { prices, timestamps };
+  }
+
+  return { admin, oraclePubkey, decimals, bump, assets };
+}
+
+function fmtOnchainPrice(raw, decimals) {
+  const val = raw / (10 ** decimals);
+  if (val >= 1000) return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (val >= 1) return '$' + val.toFixed(2);
+  if (val >= 0.01) return '$' + val.toFixed(4);
+  return '$' + val.toFixed(8);
+}
+
+function timeAgo(tsMs) {
+  if (!tsMs) return 'never';
+  const secs = Math.floor((Date.now() - tsMs) / 1000);
+  if (secs < 0) return 'future';
+  if (secs < 5) return 'just now';
+  if (secs < 60) return secs + 's ago';
+  if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+  return Math.floor(secs / 3600) + 'h ago';
+}
+
+function medianOf(arr) {
+  const valid = arr.filter(v => v > 0).sort((a, b) => a - b);
+  if (!valid.length) return 0;
+  const mid = Math.floor(valid.length / 2);
+  return valid.length % 2 ? valid[mid] : (valid[mid - 1] + valid[mid]) / 2;
+}
+
+async function refreshOnchainState() {
+  const spinner = document.getElementById('onchainSpinner');
+  spinner.style.display = 'inline-block';
+
+  try {
+    const acct = await fetchAccountData(OC_PDA);
+    if (!acct) {
+      document.getElementById('onchainGrid').innerHTML = '<div class="empty-state">PDA not found on-chain.</div>';
+      return;
+    }
+
+    const state = parseOracleState(acct.data);
+    onchainLoaded = true;
+
+    // Update metadata
+    document.getElementById('oc-admin').textContent = state.admin.slice(0, 8) + '…' + state.admin.slice(-4);
+    document.getElementById('oc-oracle-key').textContent = state.oraclePubkey.slice(0, 16) + '…';
+    document.getElementById('oc-decimals').textContent = state.decimals;
+    document.getElementById('oc-size').textContent = acct.size + ' bytes';
+    document.getElementById('onchainLastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString();
+
+    // Build asset cards
+    const grid = document.getElementById('onchainGrid');
+    grid.innerHTML = OC_ASSETS.map(name => {
+      const a = state.assets[name];
+      const median = medianOf(a.prices);
+      const latestTs = Math.max(...a.timestamps.filter(t => t > 0));
+      const freshness = latestTs ? timeAgo(latestTs) : 'no data';
+      const activeSlots = a.prices.filter(p => p > 0).length;
+
+      const slotsHtml = a.prices.map((p, i) => {
+        const ts = a.timestamps[i];
+        const isEmpty = p === 0 && ts === 0;
+        const ageSecs = ts ? (Date.now() - ts) / 1000 : Infinity;
+        const cls = isEmpty ? 'empty' : ageSecs < 30 ? 'fresh' : 'stale';
+        return `<div class="onchain-slot ${cls}">
+          <div class="onchain-slot-label">R${i + 1}</div>
+          <div class="onchain-slot-price">${isEmpty ? '—' : fmtOnchainPrice(p, state.decimals)}</div>
+          <div class="onchain-slot-time">${isEmpty ? '—' : timeAgo(ts)}</div>
+        </div>`;
+      }).join('');
+
+      return `<div class="onchain-card">
+        <div class="onchain-card-header">
+          <span class="onchain-card-title">${name}</span>
+          <span class="onchain-card-price">${median ? fmtOnchainPrice(median, state.decimals) : '—'}</span>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;">
+          ${activeSlots}/5 slots active · Last update: ${freshness}
+        </div>
+        <div class="onchain-slots">${slotsHtml}</div>
+      </div>`;
+    }).join('');
+
+    // Auto-refresh every 10s
+    if (!onchainRefreshInterval) {
+      onchainRefreshInterval = setInterval(() => {
+        if (document.getElementById('tab-onchain').classList.contains('active')) {
+          refreshOnchainState();
+        }
+      }, 10000);
+    }
+
+  } catch (e) {
+    document.getElementById('onchainGrid').innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
+  } finally {
+    spinner.style.display = 'none';
+  }
+}
+
+/* ─────────────────── UPTIME TICKER ─────────────────── */
+function tickUptimes() {
+  CLIENTS.forEach(id => updateStats(id));
+}
+
+/* ─────────────────── SSE LIVE FEED ─────────────────── */
+const SSE_URL = 'http://64.20.42.194:8282/events';
+let sseEventCount = 0;
+let sseFeedEntries = [];
+const sseClientState = {};
+const sseLivePrices = {};
+
+function connectSSE() {
+  const dot = document.getElementById('sseDot');
+  const statusEl = document.getElementById('sseStatus');
+
+  // Cache-bust to avoid stale CORS failures
+  const url = SSE_URL + '?t=' + Date.now();
+  const es = new EventSource(url);
+
+  es.onopen = () => {
+    dot.className = 'health-dot ok';
+    statusEl.textContent = 'Connected';
+  };
+
+  es.onerror = () => {
+    dot.className = 'health-dot error';
+    statusEl.textContent = 'Reconnecting…';
+    es.close();
+    setTimeout(connectSSE, 3000);
+  };
+
+  es.onmessage = (ev) => {
+    try {
+      const data = JSON.parse(ev.data);
+      sseEventCount++;
+      document.getElementById('sseStats').textContent = `${sseEventCount} events`;
+      handleSSEEvent(data);
+    } catch(e) {}
+  };
+}
+
+function handleSSEEvent(data) {
+  const type = data.type;
+  if (type === 'connected') return;
+
+  // Update per-client state
+  if (data.client) {
+    if (!sseClientState[data.client]) {
+      sseClientState[data.client] = { round: 0, signed: 0, submitted: 0, errors: 0, lastTs: '', status: 'idle' };
+    }
+    const cs = sseClientState[data.client];
+    cs.lastTs = data.timestamp || '';
+
+    if (type === 'round') {
+      cs.round = data.round;
+      cs.status = 'signing';
+    } else if (type === 'price') {
+      cs.signed++;
+      cs.status = 'ok';
+    } else if (type === 'onchain') {
+      cs.submitted++;
+      cs.status = 'ok';
+    } else if (type === 'summary') {
+      cs.signed = data.signed || cs.signed;
+      cs.submitted = data.submitted || cs.submitted;
+      cs.errors = data.errors || 0;
+      cs.status = cs.errors > 0 ? 'error' : 'ok';
+    }
+    renderLiveClientGrid();
+  }
+
+  // Update live prices from price events
+  if (type === 'price' && data.price && data.symbol !== 'Total:') {
+    sseLivePrices[data.symbol] = {
+      price: data.price,
+      sources: (data.sources || '').split('+').filter(Boolean),
+      ts: data.timestamp,
+    };
+    renderLiveTicker();
+  }
+
+  // Add to feed log (skip feed events to reduce noise)
+  if (type !== 'feed') {
+    const entry = formatSSEEntry(data);
+    if (entry) {
+      sseFeedEntries.unshift(entry);
+      if (sseFeedEntries.length > 150) sseFeedEntries.pop();
+      renderLiveFeed();
+    }
+  }
+}
+
+function formatSSEEntry(data) {
+  const t = data.type;
+  const client = data.client || 'system';
+  const ts_str = data.timestamp || '';
+
+  if (t === 'price' && data.symbol !== 'Total:') {
+    return { ts: ts_str, client, text: `${data.symbol} $${fmtPrice(data.price)} ✅`, detail: data.sources || '', cls: 'success' };
+  }
+  if (t === 'round') {
+    return { ts: ts_str, client, text: `Round ${data.round}`, detail: '', cls: 'warn' };
+  }
+  if (t === 'onchain') {
+    return { ts: ts_str, client, text: `ON-CHAIN ✅ ${data.tx}`, detail: '', cls: 'success' };
+  }
+  if (t === 'summary') {
+    return { ts: ts_str, client, text: `${data.signed} signed, ${data.submitted} submitted, ${data.errors} errors`, detail: '', cls: data.errors > 0 ? 'error' : 'success' };
+  }
+  if (t === 'status') {
+    return { ts: ts_str, client, text: data.message || '', detail: '', cls: 'success' };
+  }
+  return null;
+}
+
+function renderLiveTicker() {
+  const el = document.getElementById('liveTicker');
+  const syms = Object.keys(sseLivePrices).sort();
+  el.innerHTML = syms.map(sym => {
+    const p = sseLivePrices[sym];
+    const srcCount = (p.sources || []).length;
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;display:flex;align-items:center;gap:6px;">
+      <span style="font-weight:600;color:var(--purple);font-size:11px;">${sym}</span>
+      <span style="font-family:'SF Mono',monospace;font-size:12px;color:var(--text);">$${fmtPrice(p.price)}</span>
+      <span style="font-size:9px;color:var(--text-dim);">${srcCount}src</span>
+    </div>`;
+  }).join('');
+}
+
+function renderLiveClientGrid() {
+  const el = document.getElementById('liveClientGrid');
+  el.innerHTML = CLIENTS.map(id => {
+    const cs = sseClientState[id] || { round: 0, signed: 0, submitted: 0, errors: 0, lastTs: '', status: 'idle' };
+    const statusColor = cs.status === 'ok' ? 'var(--green)' : cs.status === 'error' ? 'var(--red)' : cs.status === 'signing' ? 'var(--purple)' : 'var(--text-dim)';
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;">
+      <div style="font-size:11px;font-weight:600;color:${statusColor};margin-bottom:4px;">${id}</div>
+      <div style="font-size:10px;color:var(--text-muted);">R${cs.round} · ${cs.signed}✅ ${cs.submitted}⛓ ${cs.errors}❌</div>
+      <div style="font-size:9px;color:var(--text-dim);margin-top:2px;">${cs.lastTs}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderLiveFeed() {
+  const wrap = document.getElementById('liveFeedWrap');
+  if (!sseFeedEntries.length) {
+    wrap.innerHTML = '<div class="empty-state">Waiting for events…</div>';
+    return;
+  }
+  wrap.innerHTML = sseFeedEntries.map(e => `
+    <div class="log-entry ${e.cls}">
+      <span class="log-ts">${e.ts}</span>
+      <span class="log-client">${e.client}</span>
+      <span class="log-result">${e.text}</span>
+      <span class="log-detail">${e.detail}</span>
+    </div>
+  `).join('');
+}
+
+/* ─────────────────── INIT ─────────────────── */
+async function init() {
+  buildRelayCards();
+  await refreshVaultStatus();
+
+  // Auto-refresh vault every 10s
+  vaultAutoRefresh = setInterval(refreshVaultStatus, 10000);
+
+  // Uptime ticker every second
+  setInterval(tickUptimes, 1000);
+
+  // Connect SSE live feed
+  connectSSE();
+
+  addLog('system', 'init', 'ready', 'Dashboard initialized. 5 relay clients ready. SSE connected.', 'success');
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
