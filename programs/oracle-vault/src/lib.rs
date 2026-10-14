@@ -284,12 +284,13 @@ struct Ed25519SigEntry {
 ///   [12..14] u16 msg_ix_index
 /// After all entries: raw pubkey (32) + raw signature (64) + raw message (N)
 /// ```
-fn find_ed25519_sig_entry(
-    instructions_sysvar: &UncheckedAccount,
-) -> Result<Ed25519SigEntry> {
+fn find_ed25519_sig_entry(instructions_sysvar: &UncheckedAccount) -> Result<Ed25519SigEntry> {
     // Scan up to 8 instructions in the transaction.
     for ix_index in 0u8..8 {
-        let ix = match load_instruction_at_checked(ix_index as usize, &instructions_sysvar.to_account_info()) {
+        let ix = match load_instruction_at_checked(
+            ix_index as usize,
+            &instructions_sysvar.to_account_info(),
+        ) {
             Ok(ix) => ix,
             Err(_) => break, // no more instructions
         };
@@ -310,13 +311,14 @@ fn find_ed25519_sig_entry(
 
         // Parse the first signature entry (starts at offset 2, 14 bytes).
         let entry_base = 2usize;
-        let sig_offset    = u16::from_le_bytes([data[entry_base],     data[entry_base + 1]]) as usize;
-        let sig_ix        = u16::from_le_bytes([data[entry_base + 2], data[entry_base + 3]]);
-        let pubkey_offset = u16::from_le_bytes([data[entry_base + 4], data[entry_base + 5]]) as usize;
-        let pubkey_ix     = u16::from_le_bytes([data[entry_base + 6], data[entry_base + 7]]);
-        let msg_offset    = u16::from_le_bytes([data[entry_base + 8], data[entry_base + 9]]) as usize;
-        let msg_size      = u16::from_le_bytes([data[entry_base + 10], data[entry_base + 11]]) as usize;
-        let msg_ix        = u16::from_le_bytes([data[entry_base + 12], data[entry_base + 13]]);
+        let sig_offset = u16::from_le_bytes([data[entry_base], data[entry_base + 1]]) as usize;
+        let sig_ix = u16::from_le_bytes([data[entry_base + 2], data[entry_base + 3]]);
+        let pubkey_offset =
+            u16::from_le_bytes([data[entry_base + 4], data[entry_base + 5]]) as usize;
+        let pubkey_ix = u16::from_le_bytes([data[entry_base + 6], data[entry_base + 7]]);
+        let msg_offset = u16::from_le_bytes([data[entry_base + 8], data[entry_base + 9]]) as usize;
+        let msg_size = u16::from_le_bytes([data[entry_base + 10], data[entry_base + 11]]) as usize;
+        let msg_ix = u16::from_le_bytes([data[entry_base + 12], data[entry_base + 13]]);
 
         // 0xFFFF means "same instruction's data"; we only handle that case here.
         if sig_ix != 0xFFFF || pubkey_ix != 0xFFFF || msg_ix != 0xFFFF {
@@ -339,7 +341,11 @@ fn find_ed25519_sig_entry(
 
         let message = data[msg_offset..msg_offset + msg_size].to_vec();
 
-        return Ok(Ed25519SigEntry { pubkey, signature, message });
+        return Ok(Ed25519SigEntry {
+            pubkey,
+            signature,
+            message,
+        });
     }
 
     Err(OracleError::MissingEd25519Instruction.into())
@@ -429,7 +435,7 @@ pub mod oracle_vault {
         index: u8,
         price: i64,
         timestamp: i64,
-        _signature: [u8; 64],   // logged / forwarded; crypto already verified
+        _signature: [u8; 64], // logged / forwarded; crypto already verified
         message: Vec<u8>,
     ) -> Result<()> {
         require!(price >= 0, OracleError::InvalidPrice);
@@ -448,10 +454,7 @@ pub mod oracle_vault {
 
         // ── Optional: verify message format matches our expectations ────────
         let expected_msg = build_message(&asset_enum, price, timestamp);
-        require!(
-            message == expected_msg,
-            OracleError::MessageMismatch
-        );
+        require!(message == expected_msg, OracleError::MessageMismatch);
 
         // ── Write price ──────────────────────────────────────────────────────
         let state = &mut ctx.accounts.state;
@@ -517,10 +520,7 @@ pub mod oracle_vault {
 
         // ── Verify batch message format ──────────────────────────────────────
         let expected_msg = build_batch_message(index, &prices, timestamp);
-        require!(
-            message == expected_msg,
-            OracleError::MessageMismatch
-        );
+        require!(message == expected_msg, OracleError::MessageMismatch);
 
         // ── Write all prices ─────────────────────────────────────────────────
         let state = &mut ctx.accounts.state;
@@ -588,8 +588,7 @@ fn validate_index(index: u8) -> Result<usize> {
 /// Build the canonical signed message for a single-asset price submission.
 /// Format: `"ASSET:PRICE:TIMESTAMP"`
 pub fn build_message(asset: &Asset, price: i64, timestamp: i64) -> Vec<u8> {
-    format!("{}:{}:{}", asset.ticker(), price, timestamp)
-        .into_bytes()
+    format!("{}:{}:{}", asset.ticker(), price, timestamp).into_bytes()
 }
 
 /// Build the canonical signed message for a batch submission.
@@ -597,10 +596,7 @@ pub fn build_message(asset: &Asset, price: i64, timestamp: i64) -> Vec<u8> {
 pub fn build_batch_message(index: u8, prices: &[i64], timestamp: i64) -> Vec<u8> {
     format!(
         "BATCH:{}:{}:{}:{}:{}:{}:{}:{}",
-        index,
-        prices[0], prices[1], prices[2],
-        prices[3], prices[4], prices[5],
-        timestamp
+        index, prices[0], prices[1], prices[2], prices[3], prices[4], prices[5], timestamp
     )
     .into_bytes()
 }

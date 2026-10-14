@@ -1,0 +1,13 @@
+.git
+.github
+.tasks
+target
+**/node_modules
+**/dist
+**/keys
+**/.env
+**/.env.*
+**/*.log
+**/__pycache__
+oracle-v2-keypair.json
+relay/openbao-creds.json

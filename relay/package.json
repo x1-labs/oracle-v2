@@ -4,6 +4,7 @@
   "description": "Oracle V2 off-chain relay with OpenBao Transit signing (open-source Vault fork, MPL 2.0)",
   "type": "module",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "demo": "npx tsx src/demo.ts",
     "security": "npx tsx src/security-tests.ts",
     "setup": "bash src/setup-openbao.sh",

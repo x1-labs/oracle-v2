@@ -67,11 +67,7 @@ pub mod oracle_v2 {
     // ─── Admin: Dynamic Key Management ──────────────────────────────────
 
     /// Set an updater pubkey at the given slot index (0..3). Admin only.
-    pub fn set_updater(
-        ctx: Context<AdminOnly>,
-        index: u8,
-        new_pubkey: Pubkey,
-    ) -> Result<()> {
+    pub fn set_updater(ctx: Context<AdminOnly>, index: u8, new_pubkey: Pubkey) -> Result<()> {
         require!(index < 4, OracleError::BadIndex);
         let s = &mut ctx.accounts.state;
 
@@ -255,10 +251,22 @@ pub mod oracle_v2 {
                 }
                 // Write param + timestamp
                 match index {
-                    1 => { s.$field.param1 = $price; s.$field.ts1 = client_ts_ms; }
-                    2 => { s.$field.param2 = $price; s.$field.ts2 = client_ts_ms; }
-                    3 => { s.$field.param3 = $price; s.$field.ts3 = client_ts_ms; }
-                    4 => { s.$field.param4 = $price; s.$field.ts4 = client_ts_ms; }
+                    1 => {
+                        s.$field.param1 = $price;
+                        s.$field.ts1 = client_ts_ms;
+                    }
+                    2 => {
+                        s.$field.param2 = $price;
+                        s.$field.ts2 = client_ts_ms;
+                    }
+                    3 => {
+                        s.$field.param3 = $price;
+                        s.$field.ts3 = client_ts_ms;
+                    }
+                    4 => {
+                        s.$field.param4 = $price;
+                        s.$field.ts4 = client_ts_ms;
+                    }
                     _ => unreachable!(),
                 }
                 // Update last valid
@@ -403,21 +411,21 @@ fn check_price_bounds(new_price: i64, last_valid: i64) -> Result<()> {
 
 #[account]
 pub struct OracleState {
-    pub admin: Pubkey,                  // 32
-    pub paused: bool,                   // 1
-    pub decimals: u8,                   // 1
-    pub bump: u8,                       // 1
-    pub updaters: [UpdaterSlot; 4],     // 4 × 33 = 132
-    pub btc: AssetData,                 // 88
-    pub eth: AssetData,                 // 88
-    pub sol: AssetData,                 // 88
-    pub hype: AssetData,                // 88
-    pub zec: AssetData,                 // 88
-    pub tsla: AssetData,                // 88
-    pub nvda: AssetData,                // 88
-    pub mstr: AssetData,                // 88
-    pub gold: AssetData,                // 88
-    pub silver: AssetData,              // 88
+    pub admin: Pubkey,              // 32
+    pub paused: bool,               // 1
+    pub decimals: u8,               // 1
+    pub bump: u8,                   // 1
+    pub updaters: [UpdaterSlot; 4], // 4 × 33 = 132
+    pub btc: AssetData,             // 88
+    pub eth: AssetData,             // 88
+    pub sol: AssetData,             // 88
+    pub hype: AssetData,            // 88
+    pub zec: AssetData,             // 88
+    pub tsla: AssetData,            // 88
+    pub nvda: AssetData,            // 88
+    pub mstr: AssetData,            // 88
+    pub gold: AssetData,            // 88
+    pub silver: AssetData,          // 88
 }
 
 impl OracleState {
@@ -427,8 +435,8 @@ impl OracleState {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default)]
 pub struct UpdaterSlot {
-    pub pubkey: Pubkey,  // 32
-    pub active: bool,    // 1
+    pub pubkey: Pubkey, // 32
+    pub active: bool,   // 1
 }
 
 impl UpdaterSlot {

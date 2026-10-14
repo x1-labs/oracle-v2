@@ -6,6 +6,7 @@ skip-lint = false
 
 [programs.mainnet]
 oracle_v2 = "9XQ8gvrBfkxpcfdXj3BF5XrorRGpdpQvoFibqHdyRei6"
+oracle_vault = "9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2"
 
 [registry]
 url = "https://api.apr.dev"

@@ -207,7 +207,7 @@ if (
   const RELAY_DIR = resolve(__dirname, "..");
 
   const OPENBAO_CREDS_PATH = join(RELAY_DIR, "openbao-creds.json");
-  const LEGACY_TOKEN_PATH = "/home/jack/vault-test/relay-token.txt";
+  const LEGACY_TOKEN_PATH = process.env.LEGACY_RELAY_TOKEN_PATH;
 
   let token: string;
   let vaultAddr = "http://127.0.0.1:8200";
@@ -216,7 +216,7 @@ if (
     const creds = JSON.parse(readFileSync(OPENBAO_CREDS_PATH, "utf-8"));
     token = creds.relay_token;
     vaultAddr = creds.vault_addr || vaultAddr;
-  } else if (existsSync(LEGACY_TOKEN_PATH)) {
+  } else if (LEGACY_TOKEN_PATH && existsSync(LEGACY_TOKEN_PATH)) {
     token = readFileSync(LEGACY_TOKEN_PATH, "utf-8").trim();
   } else {
     console.error(

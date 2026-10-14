@@ -10,18 +10,27 @@ import {
 } from "@solana/web3.js";
 import * as fs from "fs";
 import { createHash } from "crypto";
+import { OpenBaoAuth } from "./openbao-auth.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
-const CLIENT_ID   = process.env.CLIENT_ID   || "relay-0";
-const VAULT_ADDR  = process.env.VAULT_ADDR  || "http://127.0.0.1:8200";
-const VAULT_TOKEN = process.env.VAULT_TOKEN || "";
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Required environment variable ${name} is not set`);
+  return value;
+}
+
+const CLIENT_ID   = requiredEnv("CLIENT_ID");
+const VAULT_ADDR  = requiredEnv("VAULT_ADDR");
+const VAULT_TOKEN = process.env.VAULT_TOKEN;
+const VAULT_ROLE_ID = process.env.VAULT_ROLE_ID;
+const VAULT_SECRET_ID_FILE = process.env.VAULT_SECRET_ID_FILE;
 const KEY_NAME    = process.env.KEY_NAME    || "oracle-price-signer";
 const INTERVAL    = parseInt(process.env.INTERVAL || "10", 10) * 1000;
-const PRICE_FEED  = process.env.PRICE_FEED  || "http://127.0.0.1:8281";
-const KEYPAIR_PATH = process.env.KEYPAIR_PATH || "";
-const RPC_URL     = process.env.RPC_URL     || "https://rpc.mainnet.x1.xyz";
+const PRICE_FEED  = requiredEnv("PRICE_FEED");
+const KEYPAIR_PATH = requiredEnv("KEYPAIR_PATH");
+const RPC_URL     = requiredEnv("RPC_URL");
 const PROGRAM_ID  = new PublicKey(process.env.PROGRAM_ID || "9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2");
-const TRANSIT_B64 = process.env.TRANSIT_PUBKEY || "8tJv+C6x1PKBtzapaR2Zx8TM8YqeDGzStfVspLBgw1w=";
+const TRANSIT_B64 = requiredEnv("TRANSIT_PUBKEY");
 const STATE_PDA   = new PublicKey("8XZBqbKhFXHqNGzxV3Tt6gEs9r8ZrNghsRg7zBwLMGJf");
 const CU_BUDGET   = parseInt(process.env.CU_BUDGET || "25000", 10);
 
@@ -45,8 +54,21 @@ const connection = new Connection(RPC_URL, "confirmed");
 const clientNum = parseInt(CLIENT_ID.split("-").pop() || "1", 10);
 const relayIndex = clientNum;
 
+if (!Number.isInteger(relayIndex) || relayIndex < 1 || relayIndex > 5) {
+  throw new Error(`CLIENT_ID must end in a relay index from 1 through 5: ${CLIENT_ID}`);
+}
+if (!Number.isFinite(INTERVAL) || INTERVAL <= 0) {
+  throw new Error("INTERVAL must be a positive number of seconds");
+}
+
 const keypairData: number[] = JSON.parse(fs.readFileSync(KEYPAIR_PATH, "utf-8"));
 const wallet = Keypair.fromSecretKey(Uint8Array.from(keypairData));
+const vaultAuth = new OpenBaoAuth({
+  address: VAULT_ADDR,
+  staticToken: VAULT_TOKEN,
+  roleId: VAULT_ROLE_ID,
+  secretIdFile: VAULT_SECRET_ID_FILE,
+});
 
 // ── ANSI helpers ────────────────────────────────────────────────────────────
 const G = "\x1b[32m", R = "\x1b[31m", Y = "\x1b[33m";
@@ -81,11 +103,12 @@ async function checkVault(): Promise<boolean> {
 }
 
 // ── Sign via OpenBao Transit ────────────────────────────────────────────────
-async function transitSign(message: Buffer): Promise<Buffer> {
+async function transitSign(message: Buffer, retryAuth = true): Promise<Buffer> {
+  const token = await vaultAuth.getToken();
   const resp = await fetch(`${VAULT_ADDR}/v1/transit/sign/${KEY_NAME}`, {
     method: "POST",
     headers: {
-      "X-Vault-Token": VAULT_TOKEN,
+      "X-Vault-Token": token,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -94,7 +117,18 @@ async function transitSign(message: Buffer): Promise<Buffer> {
     }),
   });
 
+  if ((resp.status === 401 || resp.status === 403) && retryAuth && !VAULT_TOKEN) {
+    vaultAuth.invalidate();
+    return transitSign(message, false);
+  }
+  if (!resp.ok) {
+    throw new Error(`OpenBao sign request failed with HTTP ${resp.status}`);
+  }
+
   const body = (await resp.json()) as VaultSignResponse;
+  if (!body.data?.signature) {
+    throw new Error("OpenBao sign response did not contain a signature");
+  }
   let sigB64 = body.data.signature.split(":")[2]
     .replace(/-/g, "+")
     .replace(/_/g, "/");
@@ -253,6 +287,18 @@ while (!(await checkVault())) {
   await new Promise((r) => setTimeout(r, 5000));
 }
 log("OpenBao: OK ✅", G);
+
+while (true) {
+  try {
+    await vaultAuth.getToken();
+    log(`OpenBao authentication: ${VAULT_TOKEN ? "token" : "AppRole"} ✅`, G);
+    break;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log(`Waiting for OpenBao authentication: ${msg}`, Y);
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+}
 
 // Stagger start
 await new Promise((r) => setTimeout(r, clientNum * 2000));

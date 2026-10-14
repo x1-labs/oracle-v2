@@ -1,0 +1,21 @@
+{
+  "name": "oracle-v2-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  },
+  "workspaces": [
+    "relay",
+    "relay-clients"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:node": "npm test --workspaces --if-present",
+    "check:rust": "cargo fmt --all -- --check && cargo check --locked --workspace && cargo test --locked --workspace",
+    "check:python": "python3 -m py_compile price-feed/price-feed.py dashboard/sse-bridge.py",
+    "check": "npm run typecheck && npm run build && npm run test:node && npm run check:rust && npm run check:python"
+  }
+}

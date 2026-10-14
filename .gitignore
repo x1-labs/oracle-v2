@@ -5,3 +5,8 @@ dist/
 keys/
 *.log
 .env
+__pycache__/
+*.py[cod]
+relay/openbao-creds.json
+oracle-v2-keypair.json
+.tasks/

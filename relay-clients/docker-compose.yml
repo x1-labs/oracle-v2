@@ -1,86 +1,57 @@
+x-relay-common: &relay-common
+  build:
+    context: ..
+    dockerfile: relay-clients/Dockerfile
+  environment: &relay-environment
+    VAULT_ADDR: ${VAULT_ADDR:?Set VAULT_ADDR explicitly}
+    VAULT_TOKEN: ${RELAY_TOKEN:?Set RELAY_TOKEN explicitly}
+    KEY_NAME: ${KEY_NAME:-oracle-price-signer}
+    INTERVAL: ${INTERVAL:-10}
+    PRICE_FEED: ${PRICE_FEED:?Set PRICE_FEED explicitly}
+    RPC_URL: ${RPC_URL:?Set RPC_URL explicitly}
+    PROGRAM_ID: ${PROGRAM_ID:-9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2}
+    TRANSIT_PUBKEY: ${TRANSIT_PUBKEY:?Set TRANSIT_PUBKEY explicitly}
+  volumes:
+    - ./keys:/keys:ro
+  restart: unless-stopped
+
 services:
   relay-1:
-    build: .
+    <<: *relay-common
     container_name: oracle-relay-1
     environment:
-      - CLIENT_ID=relay-1
-      - VAULT_ADDR=http://64.20.42.194:8200
-      - VAULT_TOKEN=${RELAY_TOKEN}
-      - KEY_NAME=oracle-price-signer
-      - INTERVAL=10
-      - PRICE_FEED=http://64.20.42.194:8281
-      - KEYPAIR_PATH=/keys/relay-1.json
-      - RPC_URL=https://rpc.mainnet.x1.xyz
-      - PROGRAM_ID=9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2
-      - TRANSIT_PUBKEY=8tJv+C6x1PKBtzapaR2Zx8TM8YqeDGzStfVspLBgw1w=
-    volumes:
-      - ./keys:/keys:ro
-    restart: unless-stopped
+      <<: *relay-environment
+      CLIENT_ID: relay-1
+      KEYPAIR_PATH: /keys/relay-1.json
+
   relay-2:
-    build: .
+    <<: *relay-common
     container_name: oracle-relay-2
     environment:
-      - CLIENT_ID=relay-2
-      - VAULT_ADDR=http://64.20.42.194:8200
-      - VAULT_TOKEN=${RELAY_TOKEN}
-      - KEY_NAME=oracle-price-signer
-      - INTERVAL=10
-      - PRICE_FEED=http://64.20.42.194:8281
-      - KEYPAIR_PATH=/keys/relay-2.json
-      - RPC_URL=https://rpc.mainnet.x1.xyz
-      - PROGRAM_ID=9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2
-      - TRANSIT_PUBKEY=8tJv+C6x1PKBtzapaR2Zx8TM8YqeDGzStfVspLBgw1w=
-    volumes:
-      - ./keys:/keys:ro
-    restart: unless-stopped
+      <<: *relay-environment
+      CLIENT_ID: relay-2
+      KEYPAIR_PATH: /keys/relay-2.json
+
   relay-3:
-    build: .
+    <<: *relay-common
     container_name: oracle-relay-3
     environment:
-      - CLIENT_ID=relay-3
-      - VAULT_ADDR=http://64.20.42.194:8200
-      - VAULT_TOKEN=${RELAY_TOKEN}
-      - KEY_NAME=oracle-price-signer
-      - INTERVAL=10
-      - PRICE_FEED=http://64.20.42.194:8281
-      - KEYPAIR_PATH=/keys/relay-3.json
-      - RPC_URL=https://rpc.mainnet.x1.xyz
-      - PROGRAM_ID=9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2
-      - TRANSIT_PUBKEY=8tJv+C6x1PKBtzapaR2Zx8TM8YqeDGzStfVspLBgw1w=
-    volumes:
-      - ./keys:/keys:ro
-    restart: unless-stopped
+      <<: *relay-environment
+      CLIENT_ID: relay-3
+      KEYPAIR_PATH: /keys/relay-3.json
+
   relay-4:
-    build: .
+    <<: *relay-common
     container_name: oracle-relay-4
     environment:
-      - CLIENT_ID=relay-4
-      - VAULT_ADDR=http://64.20.42.194:8200
-      - VAULT_TOKEN=${RELAY_TOKEN}
-      - KEY_NAME=oracle-price-signer
-      - INTERVAL=10
-      - PRICE_FEED=http://64.20.42.194:8281
-      - KEYPAIR_PATH=/keys/relay-4.json
-      - RPC_URL=https://rpc.mainnet.x1.xyz
-      - PROGRAM_ID=9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2
-      - TRANSIT_PUBKEY=8tJv+C6x1PKBtzapaR2Zx8TM8YqeDGzStfVspLBgw1w=
-    volumes:
-      - ./keys:/keys:ro
-    restart: unless-stopped
+      <<: *relay-environment
+      CLIENT_ID: relay-4
+      KEYPAIR_PATH: /keys/relay-4.json
+
   relay-5:
-    build: .
+    <<: *relay-common
     container_name: oracle-relay-5
     environment:
-      - CLIENT_ID=relay-5
-      - VAULT_ADDR=http://64.20.42.194:8200
-      - VAULT_TOKEN=${RELAY_TOKEN}
-      - KEY_NAME=oracle-price-signer
-      - INTERVAL=10
-      - PRICE_FEED=http://64.20.42.194:8281
-      - KEYPAIR_PATH=/keys/relay-5.json
-      - RPC_URL=https://rpc.mainnet.x1.xyz
-      - PROGRAM_ID=9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2
-      - TRANSIT_PUBKEY=8tJv+C6x1PKBtzapaR2Zx8TM8YqeDGzStfVspLBgw1w=
-    volumes:
-      - ./keys:/keys:ro
-    restart: unless-stopped
+      <<: *relay-environment
+      CLIENT_ID: relay-5
+      KEYPAIR_PATH: /keys/relay-5.json

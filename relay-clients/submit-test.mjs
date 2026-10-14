@@ -2,20 +2,31 @@ import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, Sy
 import fs from "fs";
 import { createHash } from "crypto";
 
-const RPC = "https://rpc.mainnet.x1.xyz";
-const PROGRAM_ID = new PublicKey("9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2");
-const STATE_PDA = new PublicKey("8XZBqbKhFXHqNGzxV3Tt6gEs9r8ZrNghsRg7zBwLMGJf");
+function requiredEnv(name) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} must be set`);
+  return value;
+}
+
+const RPC = requiredEnv("RPC_URL");
+const PROGRAM_ID = new PublicKey(requiredEnv("PROGRAM_ID"));
+const STATE_PDA = new PublicKey(requiredEnv("STATE_PDA"));
+const KEYPAIR_PATH = requiredEnv("KEYPAIR_PATH");
+const TRANSIT_PUBLIC_KEY_BASE64 = requiredEnv("TRANSIT_PUBLIC_KEY_BASE64");
+const PRICE_FEED_URL = requiredEnv("PRICE_FEED_URL");
+const VAULT_ADDR = requiredEnv("VAULT_ADDR").replace(/\/$/, "");
+const VAULT_TOKEN_FILE = requiredEnv("VAULT_TOKEN_FILE");
 
 // Load relay-1 keypair
-const kp = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync("keys/relay-1.json"))));
+const kp = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(KEYPAIR_PATH))));
 console.log("Relay wallet:", kp.publicKey.toBase58());
 
 // Transit pubkey
-const transitPubkey = Buffer.from("8tJv+C6x1PKBtzapaR2Zx8TM8YqeDGzStfVspLBgw1w=", "base64");
+const transitPubkey = Buffer.from(TRANSIT_PUBLIC_KEY_BASE64, "base64");
 console.log("Transit pubkey:", transitPubkey.toString("hex").slice(0, 16) + "...");
 
 // Fetch a price from the feed
-const feedResp = await fetch("http://127.0.0.1:8281");
+const feedResp = await fetch(PRICE_FEED_URL);
 const feed = await feedResp.json();
 console.log("Feed update #" + feed.update_count);
 
@@ -32,9 +43,9 @@ const msgBytes = Buffer.from(batchMsg);
 console.log("Message:", batchMsg.slice(0, 60) + "...");
 
 // Sign via OpenBao Transit
-const vaultResp = await fetch("http://127.0.0.1:8200/v1/transit/sign/oracle-price-signer", {
+const vaultResp = await fetch(`${VAULT_ADDR}/v1/transit/sign/oracle-price-signer`, {
   method: "POST",
-  headers: { "X-Vault-Token": fs.readFileSync("/home/jack/openbao-relay-token.txt", "utf8").trim(), "Content-Type": "application/json" },
+  headers: { "X-Vault-Token": fs.readFileSync(VAULT_TOKEN_FILE, "utf8").trim(), "Content-Type": "application/json" },
   body: JSON.stringify({ input: msgBytes.toString("base64"), marshaling_algorithm: "jws" })
 });
 const vaultData = await vaultResp.json();

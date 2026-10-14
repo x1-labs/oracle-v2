@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test dist/*.test.js",
     "start": "node dist/relay-client.js"
   },
   "dependencies": {

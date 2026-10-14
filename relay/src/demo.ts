@@ -43,9 +43,9 @@ const RELAY_DIR = resolve(__dirname, "..");
 // Primary: openbao-creds.json (created by setup-openbao.sh)
 const OPENBAO_CREDS_PATH = join(RELAY_DIR, "openbao-creds.json");
 
-// Legacy fallback paths (backwards compat with old Vault setup)
-const LEGACY_INIT_KEYS_PATH = "/home/jack/vault-test/init-keys.json";
-const LEGACY_RELAY_TOKEN_PATH = "/home/jack/vault-test/relay-token.txt";
+// Optional legacy fallback paths for an older Vault setup.
+const LEGACY_INIT_KEYS_PATH = process.env.LEGACY_INIT_KEYS_PATH;
+const LEGACY_RELAY_TOKEN_PATH = process.env.LEGACY_RELAY_TOKEN_PATH;
 
 const VAULT_ADDR = "http://127.0.0.1:8200";
 const TRANSIT_KEY_NAME = "oracle-price-signer";
@@ -103,7 +103,12 @@ function loadCredentials(): LoadedCreds {
   }
 
   // Legacy fallback: old Vault init-keys.json + relay-token.txt
-  if (existsSync(LEGACY_INIT_KEYS_PATH) && existsSync(LEGACY_RELAY_TOKEN_PATH)) {
+  if (
+    LEGACY_INIT_KEYS_PATH &&
+    LEGACY_RELAY_TOKEN_PATH &&
+    existsSync(LEGACY_INIT_KEYS_PATH) &&
+    existsSync(LEGACY_RELAY_TOKEN_PATH)
+  ) {
     const initKeys = JSON.parse(readFileSync(LEGACY_INIT_KEYS_PATH, "utf-8"));
     const relayToken = readFileSync(LEGACY_RELAY_TOKEN_PATH, "utf-8").trim();
     return {

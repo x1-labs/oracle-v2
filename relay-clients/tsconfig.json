@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "declaration": false
   },
-  "include": ["relay-client.ts"]
+  "include": ["*.ts"]
 }

@@ -217,16 +217,43 @@ def price_loop():
         time.sleep(INTERVAL)
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        with lock:
-            data = json.dumps(price_cache)
-        self.send_response(200)
+    def send_json(self, status, payload):
+        data = json.dumps(payload).encode()
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data.encode())
+        self.wfile.write(data)
+
+    def do_GET(self):
+        with lock:
+            snapshot = dict(price_cache)
+
+        if self.path == "/healthz":
+            self.send_json(200, {"status": "ok"})
+            return
+
+        if self.path == "/readyz":
+            age_ms = int(time.time() * 1000) - snapshot["timestamp"]
+            ready = bool(snapshot["prices"]) and 0 <= age_ms <= 60_000
+            self.send_json(
+                200 if ready else 503,
+                {
+                    "status": "ready" if ready else "not-ready",
+                    "age_ms": age_ms if snapshot["timestamp"] else None,
+                    "asset_count": len(snapshot["prices"]),
+                },
+            )
+            return
+
+        if self.path not in ("/", "/prices"):
+            self.send_json(404, {"error": "not found"})
+            return
+
+        self.send_json(200, snapshot)
 
     def do_OPTIONS(self):
         self.send_response(200)
