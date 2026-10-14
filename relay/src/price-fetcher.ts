@@ -109,8 +109,8 @@ async function fetchFromCoinGecko(retries: number = 2): Promise<{
         sol: data.solana?.usd ?? null,
         gold: data["tether-gold"]?.usd ?? null,
         // CoinGecko "silver" ID is a random crypto token, not the metal.
-        // Silver metal isn't on their free tier. Use null → fallback to X1 oracle or demo value.
-        silver: null,
+        // Silver metal isn't on their free tier. Omit it so the caller falls
+        // back to the X1 oracle or the demo value.
       };
     } catch {
       if (attempt === retries) return null;

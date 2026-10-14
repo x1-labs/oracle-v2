@@ -2,16 +2,22 @@ import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
 import fs from "fs";
 
-const PROGRAM_ID = new PublicKey("9mPmjK8NxJadYDiHiYAQH4WFCnKJr7ZV8ria63ZkMtv2");
-const RPC = "https://rpc.mainnet.x1.xyz";
+function requiredEnv(name) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} must be set`);
+  return value;
+}
+
+const PROGRAM_ID = new PublicKey(requiredEnv("PROGRAM_ID"));
+const RPC = requiredEnv("RPC_URL");
 
 // Load wallet
-const walletKey = JSON.parse(fs.readFileSync("/home/jack/.config/solana/id.json"));
+const walletKey = JSON.parse(fs.readFileSync(requiredEnv("ADMIN_KEYPAIR_PATH")));
 const wallet = Keypair.fromSecretKey(Uint8Array.from(walletKey));
 console.log("Admin wallet:", wallet.publicKey.toBase58());
 
 // OpenBao Transit public key (base64 decoded)
-const transitPubkeyB64 = "8tJv+C6x1PKBtzapaR2Zx8TM8YqeDGzStfVspLBgw1w=";
+const transitPubkeyB64 = requiredEnv("TRANSIT_PUBLIC_KEY_BASE64");
 const transitPubkey = Buffer.from(transitPubkeyB64, "base64");
 console.log("Transit pubkey (hex):", transitPubkey.toString("hex"));
 console.log("Transit pubkey length:", transitPubkey.length);

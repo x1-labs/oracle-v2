@@ -1,6 +1,21 @@
 # Oracle V2 — OpenBao Transit Price Oracle
 
-A production-ready price oracle for X1/Solana that uses **OpenBao Transit** (Ed25519 HSM-style signing) to authenticate price submissions on-chain.
+> [!IMPORTANT]
+> **Project status: inactive.** The deployed program accounts and state PDAs
+> remain on X1 mainnet, but the project maintainers confirm that neither oracle
+> program is currently in use. A read-only RPC check on 2026-10-14 found the
+> most recent observable transactions on 2026-03-24 for `oracle-v2` and
+> 2026-03-27 for `oracle-vault`. Treat this repository as historical/reference
+> code unless an explicit product decision reactivates it. Do not provision
+> production infrastructure, start relays, or change on-chain state solely from
+> this repository.
+
+A reference implementation of an X1/Solana price oracle that uses **OpenBao Transit** (Ed25519 HSM-style signing) to authenticate price submissions on-chain.
+
+This is a Cargo and npm monorepo. For safe root-level verification, use
+`npm ci --ignore-scripts` followed by `npm run check`. The portable runtime,
+security, and reactivation contract is documented in
+[`docs/deployment/runtime.md`](docs/deployment/runtime.md).
 
 ## Architecture
 
@@ -37,13 +52,17 @@ The Solana program that stores and validates price submissions.
 - Stores prices in 5 relay slots per asset (6 assets × 5 slots = 30 price entries)
 - Admin can rotate the oracle public key without redeploying
 
-**Build:**
+**Build from the repository root:**
 ```bash
-cd programs/oracle-vault
-cargo-build-sbf
+cargo check --workspace
+cargo test --workspace
 ```
 
 **Deploy:**
+
+This writes to X1 mainnet. Follow `AGENTS.md` and obtain explicit approval for
+the exact program, authority, artifact, and transaction before running it.
+
 ```bash
 solana program deploy target/deploy/oracle_vault.so --url https://rpc.mainnet.x1.xyz
 ```
@@ -63,37 +82,38 @@ Production relay clients that fetch prices, sign via OpenBao Transit, and submit
 - `init-oracle.mjs` — Initialize the on-chain PDA with Transit public key
 - `submit-test.mjs` — Test single price submission
 
-**Setup:**
+**Build from the repository root:**
 ```bash
-cd relay-clients
-npm install
-
-# Generate relay keypairs
-for i in 1 2 3 4 5; do
-  solana-keygen new --outfile keys/relay-${i}.json --no-bip39-passphrase
-done
-
-# Fund each relay wallet with XNT for transaction fees
-# ...
-
-# Build and start
-docker compose up -d --build
+npm ci --ignore-scripts
+npm run build --workspace=oracle-relay-client
+docker build -f relay-clients/Dockerfile -t oracle-relay:local .
 ```
+
+Starting the Compose stack submits to X1 mainnet and requires explicit
+production approval plus externally supplied OpenBao, RPC, price-feed, and
+public-key configuration. It is not a local smoke test.
 
 **Environment variables:**
 | Variable | Default | Description |
 |---|---|---|
-| `CLIENT_ID` | `relay-0` | Relay identifier (relay-1 through relay-5) |
-| `VAULT_ADDR` | `http://127.0.0.1:8200` | OpenBao address |
-| `VAULT_TOKEN` | — | OpenBao relay token (sign/verify policy) |
+| `CLIENT_ID` | required | Relay identifier (relay-1 through relay-5) |
+| `VAULT_ADDR` | required | OpenBao address |
+| `VAULT_TOKEN` | optional | Static OpenBao token for legacy/local operation; mutually exclusive with AppRole |
+| `VAULT_ROLE_ID` | AppRole mode | OpenBao AppRole identifier |
+| `VAULT_SECRET_ID_FILE` | AppRole mode | Path to the mounted OpenBao SecretID; never pass the SecretID directly in an environment variable |
 | `KEY_NAME` | `oracle-price-signer` | Transit key name |
 | `INTERVAL` | `10` | Seconds between submissions |
-| `PRICE_FEED` | `http://127.0.0.1:8281` | Price feed server URL |
-| `KEYPAIR_PATH` | — | Path to relay wallet keypair JSON |
-| `RPC_URL` | `https://rpc.mainnet.x1.xyz` | Solana/X1 RPC endpoint |
-| `PROGRAM_ID` | — | Oracle Vault program ID |
-| `TRANSIT_PUBKEY` | — | Base64-encoded Transit Ed25519 public key |
+| `PRICE_FEED` | required | Price feed server URL |
+| `KEYPAIR_PATH` | required | Path to relay wallet keypair JSON |
+| `RPC_URL` | required | Solana/X1 RPC endpoint |
+| `PROGRAM_ID` | deployed Oracle Vault ID | Oracle Vault program ID |
+| `TRANSIT_PUBKEY` | required | Base64-encoded Transit Ed25519 public key |
 | `CU_BUDGET` | `25000` | Compute unit budget per transaction |
+
+Production relays use AppRole. The client logs in through
+`/v1/auth/approle/login`, renews the leased token before expiry, and falls back
+to re-authentication if renewal fails. Static `VAULT_TOKEN` support remains for
+the local demo and legacy Compose operation only.
 
 ### `price-feed/` — Multi-Source Price Server
 

@@ -1,6 +1,8 @@
 [workspace]
+resolver = "2"
 members = [
-    "programs/oracle-v2"
+    "programs/oracle-v2",
+    "programs/oracle-vault",
 ]
 
 [profile.release]
